@@ -6,6 +6,62 @@ struct ActivityListView: View {
     @State private var showingStartSheet = false
 
     var body: some View {
+        content
+            .navigationTitle("Activities")
+            .navigationDestination(for: WorkoutSummary.self) { workout in
+                ActivityDetailView(workout: workout) { deletedID in
+                    activityPath.removeAll { $0.id == deletedID }
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        showingStartSheet = true
+                    } label: {
+                        Label("Start", systemImage: "play.fill")
+                    }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Task { await appState.refreshHealthData() }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingStartSheet) {
+                StartWorkoutSheet()
+            }
+            .overlay {
+                if appState.isLoadingWorkouts, !appState.workouts.isEmpty {
+                    ProgressView()
+                        .padding()
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            .task {
+                await appState.refreshHealthData()
+            }
+            .onChange(of: appState.workouts.map(\.id)) { _, visibleWorkoutIDs in
+                let visibleWorkoutIDs = Set(visibleWorkoutIDs)
+                activityPath.removeAll { !visibleWorkoutIDs.contains($0.id) }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if appState.isLoadingWorkouts, appState.workouts.isEmpty {
+            HumorousLoadingView(
+                title: "Loading Health data",
+                phrases: LoadingPhraseProvider.healthImportPhrases
+            )
+        } else {
+            activityList
+        }
+    }
+
+    private var activityList: some View {
         List {
             if let message = appState.authorizationMessage {
                 Section {
@@ -30,46 +86,6 @@ struct ActivityListView: View {
                     }
                 }
             }
-        }
-        .navigationTitle("Activities")
-        .navigationDestination(for: WorkoutSummary.self) { workout in
-            ActivityDetailView(workout: workout) { deletedID in
-                activityPath.removeAll { $0.id == deletedID }
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    showingStartSheet = true
-                } label: {
-                    Label("Start", systemImage: "play.fill")
-                }
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    Task { await appState.refreshHealthData() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-            }
-        }
-        .sheet(isPresented: $showingStartSheet) {
-            StartWorkoutSheet()
-        }
-        .overlay {
-            if appState.isLoadingWorkouts {
-                ProgressView("Loading Health data")
-                    .padding()
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .task {
-            await appState.refreshHealthData()
-        }
-        .onChange(of: appState.workouts.map(\.id)) { _, visibleWorkoutIDs in
-            let visibleWorkoutIDs = Set(visibleWorkoutIDs)
-            activityPath.removeAll { !visibleWorkoutIDs.contains($0.id) }
         }
     }
 }

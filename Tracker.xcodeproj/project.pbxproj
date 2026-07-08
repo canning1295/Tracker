@@ -31,6 +31,7 @@
 		4A395E6069A308381E9CE520 /* CrownMenuNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27484B38493167A1AA6490C6 /* CrownMenuNavigation.swift */; };
 		4B32AF860A4FEDD5AF3E290F /* CrownMenuNavigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27484B38493167A1AA6490C6 /* CrownMenuNavigation.swift */; };
 		4C48916BC278BE221325A515 /* WorkoutModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCE999202040DE9A2C4D35A8 /* WorkoutModels.swift */; };
+		4D289B37D22A47ACB4D1623E /* LoadingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98137052DBE57EC011D3E4A1 /* LoadingViews.swift */; };
 		4E084E33EA5755FA83EE7289 /* StravaUploadPlanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB6D35984964E70F9B9F389 /* StravaUploadPlanner.swift */; };
 		4FC140892D3876880186118F /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C8867B0DFC8B847359667AE /* SettingsStore.swift */; };
 		52214708EC9BECDD5186AEFB /* HealthKitWorkoutClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8919123057B7EA3C0315E72 /* HealthKitWorkoutClassifier.swift */; };
@@ -46,6 +47,7 @@
 		89325399EBEBB913FDDABCF6 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C8867B0DFC8B847359667AE /* SettingsStore.swift */; };
 		8AE60D0372A303E1CCEA1FD6 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9452CC272E3FBB0027ADD646 /* SettingsView.swift */; };
 		8E527CF38F0EF79D0C65D372 /* TrackerWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 8D9358A85B310ECF0F919B4D /* TrackerWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		996082EFFBEB35B196D2A2B6 /* LoadingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98137052DBE57EC011D3E4A1 /* LoadingViews.swift */; };
 		9B15F6C901D5E8F84B5D04A1 /* ActivityEditView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D33263E6E52633ABC070D5 /* ActivityEditView.swift */; };
 		A0D9C9D2048A0114C01BBD4A /* HealthKitWorkoutClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8919123057B7EA3C0315E72 /* HealthKitWorkoutClassifier.swift */; };
 		A3786B0CCE095FACB3C57156 /* SummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C601664874536CDA5358D8A7 /* SummaryView.swift */; };
@@ -154,6 +156,7 @@
 		8D9358A85B310ECF0F919B4D /* TrackerWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrackerWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9452CC272E3FBB0027ADD646 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		963F645BF48BA331CA78DB01 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		98137052DBE57EC011D3E4A1 /* LoadingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadingViews.swift; sourceTree = "<group>"; };
 		9DBD124CAA63DFB3C51D2AA7 /* ActivityDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDetailView.swift; sourceTree = "<group>"; };
 		ABB6D35984964E70F9B9F389 /* StravaUploadPlanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StravaUploadPlanner.swift; sourceTree = "<group>"; };
 		AF0801F9109FCBF6B845A3F8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -264,6 +267,7 @@
 				E6FF6FD85852A1DD3A329E82 /* Info.plist */,
 				6E44F66E4FE8715E9E542FDD /* IntervalWorkoutListView.swift */,
 				4A19F183AA221D2F4F422C43 /* KeychainStore.swift */,
+				98137052DBE57EC011D3E4A1 /* LoadingViews.swift */,
 				EC02F86078967BE976ACAD3E /* PhoneConnectivityClient.swift */,
 				9452CC272E3FBB0027ADD646 /* SettingsView.swift */,
 				D78C0B4C05377ED9DA896AFF /* StravaClient.swift */,
@@ -516,6 +520,7 @@
 				F8C2A113EDFDF7EC85FB6C05 /* HealthKitWorkoutClassifier.swift in Sources */,
 				59E3A7DB61855EFD84846708 /* IntervalWorkoutListView.swift in Sources */,
 				F5968126A1DCC0CE3D0C8D17 /* KeychainStore.swift in Sources */,
+				996082EFFBEB35B196D2A2B6 /* LoadingViews.swift in Sources */,
 				D0BE0C3EB587D62353ADAF21 /* PhoneConnectivityClient.swift in Sources */,
 				A75EBB015C6D1CDF2F55B8F7 /* SettingsActions.swift in Sources */,
 				C02509FED500A389D966F574 /* SettingsStore.swift in Sources */,
@@ -545,6 +550,7 @@
 				D4BE4A812684427EFFABD45D /* HealthKitWorkoutClassifier.swift in Sources */,
 				B723BAE42434EE62EB55FB46 /* IntervalWorkoutListView.swift in Sources */,
 				0C7595D7152A6D7A0BB02AA7 /* KeychainStore.swift in Sources */,
+				4D289B37D22A47ACB4D1623E /* LoadingViews.swift in Sources */,
 				5F541C231FE86B48635488D4 /* PhoneConnectivityClient.swift in Sources */,
 				01C3540073DA2352AE0B9A4D /* SettingsActions.swift in Sources */,
 				66158578F5F5BB44A7EF98BB /* SettingsStore.swift in Sources */,

@@ -238,6 +238,10 @@ final class AppState {
         workouts.first { $0.id == id }
     }
 
+    func isLoadingDetails(for workoutID: UUID) -> Bool {
+        healthDetailLoadingIDs.contains(workoutID)
+    }
+
     var adjustedWorkouts: [WorkoutSummary] {
         workouts.map(adjustedWorkout)
     }

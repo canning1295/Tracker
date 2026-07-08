@@ -16,6 +16,7 @@ struct ActivityDetailView: View {
         let displayWorkout = WorkoutEditApplier.adjustedWorkout(currentWorkout, edit: edit)
         let removedPauseSeconds = WorkoutEditApplier.removedPauseSeconds(for: currentWorkout, edit: edit)
         let displaySplits = SplitBuilder.splits(for: displayWorkout, unit: appState.settings.distanceUnit)
+        let isLoadingDetails = appState.isLoadingDetails(for: currentWorkout.id)
 
         List {
             Section {
@@ -147,6 +148,13 @@ struct ActivityDetailView: View {
             }
         }
         .navigationTitle(displayWorkout.activity.displayName)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if isLoadingDetails || isDeleting {
+                    ThinkingIndicator()
+                }
+            }
+        }
         .confirmationDialog("Delete Activity?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
             Button("Delete Activity", role: .destructive) {
                 Task { await deleteWorkout() }

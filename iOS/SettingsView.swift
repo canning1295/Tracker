@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
     @State private var showsStravaSetup = false
+    @State private var isImportingHealthMetrics = false
+    @State private var isConnectingStrava = false
 
     var body: some View {
         @Bindable var appState = appState
@@ -72,10 +74,17 @@ struct SettingsView: View {
                 OptionalDoubleField(title: "Known VO2 Max (ml/kg/min)", value: $appState.settings.userMetrics.knownVO2Max)
 
                 Button {
-                    Task { await appState.importUserMetricsFromHealth() }
+                    Task { await importHealthMetrics() }
                 } label: {
-                    Label("Import From Apple Health", systemImage: "heart.text.square")
+                    HStack {
+                        Label("Import From Apple Health", systemImage: "heart.text.square")
+                        if isImportingHealthMetrics {
+                            Spacer()
+                            ThinkingIndicator()
+                        }
+                    }
                 }
+                .disabled(isImportingHealthMetrics)
 
                 if let message = appState.healthMetricsMessage {
                     Text(message)
@@ -109,14 +118,21 @@ struct SettingsView: View {
 
                 Button {
                     if appState.stravaCredentialsAreComplete {
-                        Task { await appState.connectStrava(forceLogin: appState.stravaIsConnected) }
+                        Task { await connectStrava() }
                     } else {
                         showsStravaSetup = true
                         appState.requestStravaCredentialSetup()
                     }
                 } label: {
-                    Label(appState.stravaIsConnected ? "Change Strava Login" : "Connect Strava", systemImage: "link")
+                    HStack {
+                        Label(appState.stravaIsConnected ? "Change Strava Login" : "Connect Strava", systemImage: "link")
+                        if isConnectingStrava {
+                            Spacer()
+                            ThinkingIndicator()
+                        }
+                    }
                 }
+                .disabled(isConnectingStrava)
 
                 Button {
                     showsStravaSetup.toggle()
@@ -202,6 +218,20 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .toolbar { EditButton() }
+    }
+
+    private func importHealthMetrics() async {
+        guard !isImportingHealthMetrics else { return }
+        isImportingHealthMetrics = true
+        await appState.importUserMetricsFromHealth()
+        isImportingHealthMetrics = false
+    }
+
+    private func connectStrava() async {
+        guard !isConnectingStrava else { return }
+        isConnectingStrava = true
+        await appState.connectStrava(forceLogin: appState.stravaIsConnected)
+        isConnectingStrava = false
     }
 
     private var heightInchesBinding: Binding<Double?> {
