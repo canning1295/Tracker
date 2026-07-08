@@ -218,6 +218,21 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(store.loadIntervals(), [workout])
     }
 
+    func testSettingsStoreRoundTripsDeletedWorkoutIDs() throws {
+        let suiteName = "TrackerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = SettingsStore(defaults: defaults)
+        XCTAssertEqual(store.loadDeletedWorkoutIDs(), [])
+
+        let deletedIDs: Set<UUID> = [UUID(), UUID()]
+        store.saveDeletedWorkoutIDs(deletedIDs)
+        XCTAssertEqual(store.loadDeletedWorkoutIDs(), deletedIDs)
+    }
+
     func testWorkoutSettingsDecodeOldPayloadWithNewDefaults() throws {
         let json = """
         {

@@ -30,11 +30,12 @@ enum AppTab: String, CaseIterable, Identifiable {
 @MainActor
 struct AppRootView: View {
     @State private var selectedTab: AppTab = .activities
+    @State private var activityPath: [WorkoutSummary] = []
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            NavigationStack {
-                ActivityListView()
+            NavigationStack(path: $activityPath) {
+                ActivityListView(activityPath: $activityPath)
             }
             .tabItem { Label(AppTab.activities.title, systemImage: AppTab.activities.symbolName) }
             .tag(AppTab.activities)
@@ -59,4 +60,3 @@ struct AppRootView: View {
         }
     }
 }
-

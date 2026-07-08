@@ -111,12 +111,18 @@ final class AppState {
     private var healthRefreshGeneration = 0
     private var healthDetailLoadTask: Task<Void, Never>?
     private var healthDetailLoadingIDs = Set<UUID>()
+    private var deletedWorkoutIDs: Set<UUID> = [] {
+        didSet {
+            settingsStore.saveDeletedWorkoutIDs(deletedWorkoutIDs)
+        }
+    }
 
     init() {
         self.settings = settingsStore.loadSettings()
         self.intervals = settingsStore.loadIntervals()
         self.activityEdits = settingsStore.loadActivityEdits()
         self.stravaUploads = settingsStore.loadStravaUploads()
+        self.deletedWorkoutIDs = settingsStore.loadDeletedWorkoutIDs()
         let credentials = strava.storedCredentials()
         self.stravaClientID = credentials.clientID
         self.stravaClientSecret = credentials.clientSecret
@@ -156,12 +162,13 @@ final class AppState {
             try await healthKit.requestAuthorization()
             let healthWorkouts = try await healthKit.loadRecentWorkouts(limit: 50, includesDetails: false, userMetrics: settings.userMetrics)
             guard generation == healthRefreshGeneration else { return }
-            workouts = mergedWithExistingDetails(healthWorkouts)
-            healthDetailLoadingIDs = Set(healthWorkouts.map(\.id))
+            let visibleHealthWorkouts = healthWorkouts.filter { !deletedWorkoutIDs.contains($0.id) }
+            workouts = mergedWithExistingDetails(visibleHealthWorkouts)
+            healthDetailLoadingIDs = Set(visibleHealthWorkouts.map(\.id))
             authorizationMessage = healthWorkouts.isEmpty ? "No supported Apple Health workouts were found." : nil
             isLoadingWorkouts = false
             healthDetailLoadTask = Task { [weak self] in
-                await self?.loadHealthDetails(for: healthWorkouts, generation: generation)
+                await self?.loadHealthDetails(for: visibleHealthWorkouts, generation: generation)
             }
         } catch {
             guard generation == healthRefreshGeneration else { return }
@@ -253,20 +260,30 @@ final class AppState {
     }
 
     func deleteWorkout(_ workout: WorkoutSummary) async -> Bool {
-        do {
-            try await healthKit.requestAuthorization()
-            if workout.source == .healthKit {
-                try await healthKit.deleteWorkout(id: workout.id)
-            }
-            workouts.removeAll { $0.id == workout.id }
-            activityEdits.removeAll { $0.workoutID == workout.id }
-            stravaUploads.removeAll { $0.workoutID == workout.id }
+        deletedWorkoutIDs.insert(workout.id)
+        healthDetailLoadingIDs.remove(workout.id)
+        workouts.removeAll { $0.id == workout.id }
+        activityEdits.removeAll { $0.workoutID == workout.id }
+        stravaUploads.removeAll { $0.workoutID == workout.id }
+
+        guard workout.source == .healthKit else {
             authorizationMessage = nil
             return true
-        } catch {
-            authorizationMessage = error.localizedDescription
-            return false
         }
+
+        do {
+            try await healthKit.requestAuthorization()
+            do {
+                try await healthKit.deleteWorkout(id: workout.id)
+                authorizationMessage = nil
+            } catch {
+                authorizationMessage = "Removed from Tracker. Apple Health did not delete it: \(error.localizedDescription)"
+            }
+        } catch {
+            authorizationMessage = "Removed from Tracker. Apple Health was not updated: \(error.localizedDescription)"
+        }
+
+        return true
     }
 
     func stravaStatus(for workoutID: UUID) -> StravaUploadStatus {
@@ -445,11 +462,19 @@ final class AppState {
 
         for workout in metadataWorkouts {
             guard !Task.isCancelled, generation == healthRefreshGeneration else { return }
+            guard !deletedWorkoutIDs.contains(workout.id) else {
+                healthDetailLoadingIDs.remove(workout.id)
+                continue
+            }
             guard let detailedWorkout = try? await healthKit.loadWorkoutDetails(for: workout, userMetrics: settings.userMetrics) else {
                 healthDetailLoadingIDs.remove(workout.id)
                 continue
             }
             guard !Task.isCancelled, generation == healthRefreshGeneration else { return }
+            guard !deletedWorkoutIDs.contains(detailedWorkout.id) else {
+                healthDetailLoadingIDs.remove(detailedWorkout.id)
+                continue
+            }
             upsertWorkout(detailedWorkout)
             healthDetailLoadingIDs.remove(workout.id)
         }
@@ -460,6 +485,7 @@ final class AppState {
     }
 
     private func upsertWorkout(_ workout: WorkoutSummary) {
+        guard !deletedWorkoutIDs.contains(workout.id) else { return }
         if let index = workouts.firstIndex(where: { $0.id == workout.id }) {
             workouts[index] = workout
         } else {
@@ -469,7 +495,7 @@ final class AppState {
     }
 
     private func mergedWithExistingDetails(_ metadataWorkouts: [WorkoutSummary]) -> [WorkoutSummary] {
-        metadataWorkouts.map { metadata in
+        metadataWorkouts.filter { !deletedWorkoutIDs.contains($0.id) }.map { metadata in
             guard let existing = workouts.first(where: { $0.id == metadata.id }) else {
                 return metadata
             }

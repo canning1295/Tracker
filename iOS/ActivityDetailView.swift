@@ -5,6 +5,7 @@ struct ActivityDetailView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     let workout: WorkoutSummary
+    let onDelete: (UUID) -> Void
     @State private var isConfirmingDelete = false
     @State private var isDeleting = false
     @State private var deleteError: String?
@@ -152,7 +153,7 @@ struct ActivityDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(currentWorkout.source == .healthKit ? "This deletes the workout from Apple Health and removes Tracker edits." : "This removes the activity from Tracker.")
+            Text(currentWorkout.source == .healthKit ? "This removes the activity from Tracker and asks Apple Health to delete the workout." : "This removes the activity from Tracker.")
         }
         .alert("Could Not Delete Activity", isPresented: Binding(
             get: { deleteError != nil },
@@ -164,11 +165,18 @@ struct ActivityDetailView: View {
         }
     }
 
+    init(workout: WorkoutSummary, onDelete: @escaping (UUID) -> Void = { _ in }) {
+        self.workout = workout
+        self.onDelete = onDelete
+    }
+
+    @MainActor
     private func deleteWorkout() async {
         isDeleting = true
         let deleted = await appState.deleteWorkout(appState.latestWorkout(for: workout.id) ?? workout)
         isDeleting = false
         if deleted {
+            onDelete(workout.id)
             dismiss()
         } else {
             deleteError = appState.authorizationMessage ?? "The activity was not deleted."

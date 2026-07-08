@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ActivityListView: View {
     @Environment(AppState.self) private var appState
+    @Binding var activityPath: [WorkoutSummary]
     @State private var showingStartSheet = false
 
     var body: some View {
@@ -32,7 +33,9 @@ struct ActivityListView: View {
         }
         .navigationTitle("Activities")
         .navigationDestination(for: WorkoutSummary.self) { workout in
-            ActivityDetailView(workout: workout)
+            ActivityDetailView(workout: workout) { deletedID in
+                activityPath.removeAll { $0.id == deletedID }
+            }
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -63,6 +66,10 @@ struct ActivityListView: View {
         }
         .task {
             await appState.refreshHealthData()
+        }
+        .onChange(of: appState.workouts.map(\.id)) { _, visibleWorkoutIDs in
+            let visibleWorkoutIDs = Set(visibleWorkoutIDs)
+            activityPath.removeAll { !visibleWorkoutIDs.contains($0.id) }
         }
     }
 }

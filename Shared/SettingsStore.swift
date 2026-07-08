@@ -6,6 +6,7 @@ struct SettingsStore {
     private let intervalsKey = "workout.intervals.v1"
     private let activityEditsKey = "workout.activityEdits.v1"
     private let stravaUploadsKey = "workout.stravaUploads.v1"
+    private let deletedWorkoutIDsKey = "workout.deletedWorkoutIDs.v1"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -49,5 +50,16 @@ struct SettingsStore {
     func saveStravaUploads(_ uploads: [StravaUploadRecord]) {
         guard let data = try? JSONEncoder().encode(uploads) else { return }
         defaults.set(data, forKey: stravaUploadsKey)
+    }
+
+    func loadDeletedWorkoutIDs() -> Set<UUID> {
+        guard let data = defaults.data(forKey: deletedWorkoutIDsKey) else { return [] }
+        let ids = (try? JSONDecoder().decode([UUID].self, from: data)) ?? []
+        return Set(ids)
+    }
+
+    func saveDeletedWorkoutIDs(_ ids: Set<UUID>) {
+        guard let data = try? JSONEncoder().encode(Array(ids)) else { return }
+        defaults.set(data, forKey: deletedWorkoutIDsKey)
     }
 }
