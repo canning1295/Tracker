@@ -385,7 +385,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         if let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
            let statistics = builder.statistics(for: type),
            let quantity = statistics.sumQuantity() {
-            snapshot.activeEnergyKilocalories = quantity.doubleValue(for: .kilocalorie())
+            snapshot.activeEnergyKilocalories = WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: quantity.doubleValue(for: .kilocalorie()))
         }
 
         guard let activity, activity.recordsDistance, let distanceIdentifier = activity.distanceQuantityIdentifier else {

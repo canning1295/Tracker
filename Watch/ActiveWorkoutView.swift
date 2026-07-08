@@ -101,16 +101,20 @@ struct WatchMetricsPage: View {
 
                 HStack {
                     MetricBlock(title: "Pace", value: WorkoutFormatter.pace(snapshot.paceSecondsPerUnit, unit: settings.distanceUnit), color: .primary)
-                    MetricBlock(title: "Cal", value: "\(Int(snapshot.activeEnergyKilocalories.rounded()))", color: .primary)
+                    MetricBlock(title: "Act Cal", value: activeCaloriesText, color: .primary)
                 }
             } else {
                 HStack {
                     MetricBlock(title: "HR", value: heartRateDisplay.valueText, color: heartRateDisplay.color)
-                    MetricBlock(title: "Cal", value: "\(Int(snapshot.activeEnergyKilocalories.rounded()))", color: .primary)
+                    MetricBlock(title: "Act Cal", value: activeCaloriesText, color: .primary)
                 }
             }
         }
         .padding(.horizontal, 8)
+    }
+
+    private var activeCaloriesText: String {
+        "\(Int(WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: snapshot.activeEnergyKilocalories).rounded()))"
     }
 
     private var showsDistanceAndPace: Bool {

@@ -182,7 +182,7 @@ struct ActivityDetailView: View {
                 if workout.activity.recordsDistance {
                     MetricTile(title: "Distance", value: workout.distanceMeters > 0 ? WorkoutFormatter.distance(workout.distanceMeters, unit: appState.settings.distanceUnit) : "--")
                 } else {
-                    MetricTile(title: "Calories", value: WorkoutFormatter.calories(workout.activeEnergyKilocalories))
+                    MetricTile(title: "Active Calories", value: WorkoutFormatter.activeCalories(workout.activeEnergyKilocalories))
                 }
             }
             GridRow {
@@ -191,7 +191,7 @@ struct ActivityDetailView: View {
             }
             if workout.activity.supportsPace {
                 GridRow {
-                    MetricTile(title: "Calories", value: WorkoutFormatter.calories(workout.activeEnergyKilocalories))
+                    MetricTile(title: "Active Calories", value: WorkoutFormatter.activeCalories(workout.activeEnergyKilocalories))
                     MetricTile(title: "Pace", value: WorkoutFormatter.pace(PaceCalculator.paceSecondsPerUnit(distanceMeters: workout.distanceMeters, elapsedSeconds: workout.duration, unit: appState.settings.distanceUnit), unit: appState.settings.distanceUnit))
                 }
             }

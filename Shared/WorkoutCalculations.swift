@@ -264,6 +264,47 @@ enum PaceCalculator {
     }
 }
 
+enum WorkoutCalories {
+    static func activeKilocalories(fromHealthKitActiveKilocalories kilocalories: Double) -> Double {
+        max(0, kilocalories)
+    }
+
+    static func activeKilocalories(fromGrossKilocalorieEstimate kilocalories: Double, duration: TimeInterval, userMetrics: UserMetrics) -> Double {
+        max(0, kilocalories - estimatedBasalKilocalories(duration: duration, userMetrics: userMetrics))
+    }
+
+    static func estimatedBasalKilocalories(duration: TimeInterval, userMetrics: UserMetrics) -> Double {
+        guard duration > 0 else { return 0 }
+
+        if let dailyBMR = estimatedDailyBasalKilocalories(userMetrics: userMetrics) {
+            return dailyBMR * duration / 86_400
+        }
+
+        guard let weightKilograms = userMetrics.weightKilograms, weightKilograms > 0 else { return 0 }
+        return weightKilograms * duration / 3_600
+    }
+
+    private static func estimatedDailyBasalKilocalories(userMetrics: UserMetrics) -> Double? {
+        guard
+            let weightKilograms = userMetrics.weightKilograms, weightKilograms > 0,
+            let heightCentimeters = userMetrics.heightCentimeters, heightCentimeters > 0,
+            let age = userMetrics.age, age > 0
+        else {
+            return nil
+        }
+
+        let base = 10 * weightKilograms + 6.25 * heightCentimeters - 5 * Double(age)
+        switch userMetrics.biologicalSex {
+        case .male:
+            return base + 5
+        case .female:
+            return base - 161
+        case .other, .notSet, nil:
+            return base - 78
+        }
+    }
+}
+
 enum WorkoutFormatter {
     static func duration(_ seconds: TimeInterval) -> String {
         let totalSeconds = max(0, Int(seconds.rounded()))
@@ -288,8 +329,8 @@ enum WorkoutFormatter {
         return String(format: "%d:%02d/%@", minutes, seconds, unit.shortName)
     }
 
-    static func calories(_ value: Double) -> String {
-        "\(Int(value.rounded())) cal"
+    static func activeCalories(_ value: Double) -> String {
+        "\(Int(WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: value).rounded())) cal"
     }
 }
 
@@ -485,7 +526,7 @@ struct WeeklySummary: Equatable {
     var weekStart: Date
     var totalTime: TimeInterval
     var totalDistanceMeters: Double
-    var calories: Double
+    var activeCalories: Double
     var workoutCount: Int
     var activeDays: Int
     var averageHeartRate: Int?
@@ -517,7 +558,7 @@ enum SummaryEngine {
             weekStart: interval.start,
             totalTime: included.reduce(0) { $0 + $1.duration },
             totalDistanceMeters: included.reduce(0) { $0 + $1.distanceMeters },
-            calories: included.reduce(0) { $0 + $1.activeEnergyKilocalories },
+            activeCalories: included.reduce(0) { $0 + $1.activeEnergyKilocalories },
             workoutCount: included.count,
             activeDays: activeDays,
             averageHeartRate: averageHeartRate(for: included),

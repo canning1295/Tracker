@@ -15,7 +15,7 @@ struct WorkoutExporter {
               <Lap StartTime="\(iso(workout.startDate))">
                 <TotalTimeSeconds>\(Int(max(0, workout.duration)))</TotalTimeSeconds>
                 <DistanceMeters>\(max(0, workout.distanceMeters))</DistanceMeters>
-                <Calories>\(Int(max(0, workout.activeEnergyKilocalories)))</Calories>
+                <Calories>\(Int(WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: workout.activeEnergyKilocalories)))</Calories>
                 <Intensity>Active</Intensity>
                 <TriggerMethod>Manual</TriggerMethod>
                 <Track>\(points)</Track>

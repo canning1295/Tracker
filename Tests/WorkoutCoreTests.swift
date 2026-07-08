@@ -382,7 +382,7 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(summary.activeDays, 2)
         XCTAssertEqual(summary.totalTime, 6_300)
         XCTAssertEqual(summary.totalDistanceMeters, 15_000)
-        XCTAssertEqual(summary.calories, 1_130)
+        XCTAssertEqual(summary.activeCalories, 1_130)
         XCTAssertEqual(summary.averageHeartRate, 130)
         XCTAssertEqual(summary.timeByActivity[.outdoorRun], 1_800)
         XCTAssertEqual(summary.timeByActivity[.outdoorBike], 3_600)
@@ -393,6 +393,39 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(summary.heartRateZoneDurations[.zone1], 10)
         XCTAssertEqual(summary.heartRateZoneDurations[.zone2], 15)
         XCTAssertEqual(summary.heartRateZoneDurations[.zone5], 30)
+    }
+
+    func testHealthKitActiveCaloriesAreNotBMRAdjustedAgain() {
+        let activeCalories = WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: 400)
+
+        XCTAssertEqual(activeCalories, 400)
+    }
+
+    func testGrossCalorieEstimateSubtractsEstimatedBasalCalories() {
+        let metrics = UserMetrics(
+            age: 40,
+            biologicalSex: .male,
+            heightCentimeters: 180,
+            weightKilograms: 80
+        )
+
+        let activeCalories = WorkoutCalories.activeKilocalories(
+            fromGrossKilocalorieEstimate: 500,
+            duration: 3_600,
+            userMetrics: metrics
+        )
+
+        XCTAssertEqual(activeCalories, 427.92, accuracy: 0.01)
+    }
+
+    func testGrossCalorieEstimateClampsAtZeroAfterBasalSubtraction() {
+        let activeCalories = WorkoutCalories.activeKilocalories(
+            fromGrossKilocalorieEstimate: 20,
+            duration: 3_600,
+            userMetrics: UserMetrics(weightKilograms: 80)
+        )
+
+        XCTAssertEqual(activeCalories, 0)
     }
 
     func testPauseDetectionAndEditApplicationTrimAndShiftWorkoutData() {

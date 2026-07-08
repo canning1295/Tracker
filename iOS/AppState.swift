@@ -154,7 +154,7 @@ final class AppState {
 
         do {
             try await healthKit.requestAuthorization()
-            let healthWorkouts = try await healthKit.loadRecentWorkouts(limit: 50, includesDetails: false)
+            let healthWorkouts = try await healthKit.loadRecentWorkouts(limit: 50, includesDetails: false, userMetrics: settings.userMetrics)
             guard generation == healthRefreshGeneration else { return }
             workouts = mergedWithExistingDetails(healthWorkouts)
             healthDetailLoadingIDs = Set(healthWorkouts.map(\.id))
@@ -445,7 +445,7 @@ final class AppState {
 
         for workout in metadataWorkouts {
             guard !Task.isCancelled, generation == healthRefreshGeneration else { return }
-            guard let detailedWorkout = try? await healthKit.loadWorkoutDetails(for: workout) else {
+            guard let detailedWorkout = try? await healthKit.loadWorkoutDetails(for: workout, userMetrics: settings.userMetrics) else {
                 healthDetailLoadingIDs.remove(workout.id)
                 continue
             }

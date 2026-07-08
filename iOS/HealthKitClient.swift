@@ -119,7 +119,7 @@ final class HealthKitClient {
         }
     }
 
-    func loadRecentWorkouts(limit: Int, includesDetails: Bool = true) async throws -> [WorkoutSummary] {
+    func loadRecentWorkouts(limit: Int, includesDetails: Bool = true, userMetrics: UserMetrics = UserMetrics()) async throws -> [WorkoutSummary] {
         let workouts: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
             let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
             let query = HKSampleQuery(sampleType: .workoutType(), predicate: nil, limit: limit, sortDescriptors: [sort]) { _, samples, error in
@@ -148,7 +148,7 @@ final class HealthKitClient {
                     endDate: workout.endDate,
                     duration: workout.duration,
                     distanceMeters: distanceMeters(for: workout, activity: activity),
-                    activeEnergyKilocalories: activeEnergyKilocalories(for: workout),
+                    activeEnergyKilocalories: activeEnergyKilocalories(for: workout, userMetrics: userMetrics),
                     averageHeartRate: details.averageHeartRate,
                     maxHeartRate: details.maxHeartRate,
                     route: details.route,
@@ -160,7 +160,7 @@ final class HealthKitClient {
         return summaries
     }
 
-    func loadWorkoutDetails(for summary: WorkoutSummary) async throws -> WorkoutSummary {
+    func loadWorkoutDetails(for summary: WorkoutSummary, userMetrics: UserMetrics = UserMetrics()) async throws -> WorkoutSummary {
         let workout = try await workout(id: summary.id)
         guard let activity = WorkoutActivity.fromHealthKit(activityType: workout.workoutActivityType, isIndoor: workout.isIndoorWorkout) else {
             return summary
@@ -175,7 +175,7 @@ final class HealthKitClient {
             endDate: workout.endDate,
             duration: workout.duration,
             distanceMeters: distanceMeters(for: workout, activity: activity),
-            activeEnergyKilocalories: activeEnergyKilocalories(for: workout),
+            activeEnergyKilocalories: activeEnergyKilocalories(for: workout, userMetrics: userMetrics),
             averageHeartRate: details.averageHeartRate,
             maxHeartRate: details.maxHeartRate,
             route: details.route,
@@ -313,9 +313,20 @@ final class HealthKitClient {
         }
     }
 
-    private func activeEnergyKilocalories(for workout: HKWorkout) -> Double {
-        guard let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned) else { return 0 }
-        return workout.statistics(for: type)?.sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
+    private func activeEnergyKilocalories(for workout: HKWorkout, userMetrics: UserMetrics) -> Double {
+        if let type = HKQuantityType.quantityType(forIdentifier: .activeEnergyBurned),
+           let kilocalories = workout.statistics(for: type)?.sumQuantity()?.doubleValue(for: .kilocalorie()) {
+            return WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: kilocalories)
+        }
+
+        guard let grossKilocalories = workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()) else {
+            return 0
+        }
+        return WorkoutCalories.activeKilocalories(
+            fromGrossKilocalorieEstimate: grossKilocalories,
+            duration: workout.duration,
+            userMetrics: userMetrics
+        )
     }
 
     private func distanceMeters(for workout: HKWorkout, activity: WorkoutActivity) -> Double {

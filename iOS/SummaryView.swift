@@ -141,7 +141,7 @@ struct SummaryView: View {
                     }
                     GridRow {
                         SummaryTile(title: "Workouts", value: "\(summary.workoutCount)")
-                        SummaryTile(title: "Calories", value: WorkoutFormatter.calories(summary.calories))
+                        SummaryTile(title: "Active Calories", value: WorkoutFormatter.activeCalories(summary.activeCalories))
                     }
                     GridRow {
                         SummaryTile(title: "Active Days", value: "\(summary.activeDays)")

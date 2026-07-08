@@ -49,7 +49,7 @@
 	<key>NSHealthShareUsageDescription</key>
 	<string>Tracker reads workouts, heart rate, routes, body metrics, and cardio fitness to show your activity history and training summaries.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>Tracker writes completed workouts, calories, distance, and workout routes to Apple Health.</string>
+	<string>Tracker writes completed workouts, active calories, distance, and workout routes to Apple Health.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Tracker uses location during outdoor workouts to record and display your route.</string>
 	<key>NSMotionUsageDescription</key>

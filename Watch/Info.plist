@@ -41,7 +41,7 @@
 		</dict>
 	</array>
 	<key>NSHealthShareUsageDescription</key>
-	<string>Tracker reads heart rate, calories, and distance during workouts.</string>
+	<string>Tracker reads heart rate, active calories, and distance during workouts.</string>
 	<key>NSHealthUpdateUsageDescription</key>
 	<string>Tracker writes completed workouts and outdoor routes to Apple Health.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

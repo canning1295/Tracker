@@ -135,8 +135,8 @@ struct ActivityEditView: View {
                         Text(adjustedWorkout.distanceMeters > 0 ? WorkoutFormatter.distance(adjustedWorkout.distanceMeters, unit: appState.settings.distanceUnit) : "--")
                     }
                 } else {
-                    LabeledContent("Calories") {
-                        Text(WorkoutFormatter.calories(adjustedWorkout.activeEnergyKilocalories))
+                    LabeledContent("Active Calories") {
+                        Text(WorkoutFormatter.activeCalories(adjustedWorkout.activeEnergyKilocalories))
                     }
                 }
                 LabeledContent("Removed pauses") {
