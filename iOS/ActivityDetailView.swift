@@ -10,9 +10,10 @@ struct ActivityDetailView: View {
     @State private var deleteError: String?
 
     var body: some View {
-        let edit = appState.edit(for: workout.id)
-        let displayWorkout = WorkoutEditApplier.adjustedWorkout(workout, edit: edit)
-        let removedPauseSeconds = WorkoutEditApplier.removedPauseSeconds(for: workout, edit: edit)
+        let currentWorkout = appState.latestWorkout(for: workout.id) ?? workout
+        let edit = appState.edit(for: currentWorkout.id)
+        let displayWorkout = WorkoutEditApplier.adjustedWorkout(currentWorkout, edit: edit)
+        let removedPauseSeconds = WorkoutEditApplier.removedPauseSeconds(for: currentWorkout, edit: edit)
         let displaySplits = SplitBuilder.splits(for: displayWorkout, unit: appState.settings.distanceUnit)
 
         List {
@@ -77,7 +78,7 @@ struct ActivityDetailView: View {
 
             Section("Edit") {
                 NavigationLink {
-                    ActivityEditView(workout: workout)
+                    ActivityEditView(workout: currentWorkout)
                 } label: {
                     Label("Trim start/end and remove pauses", systemImage: "slider.horizontal.3")
                 }
@@ -91,11 +92,11 @@ struct ActivityDetailView: View {
             }
 
             Section("Strava") {
-                if workout.source == .demo {
+                if currentWorkout.source == .demo {
                     Label("Only Apple Health workouts are uploaded to Strava.", systemImage: "doc.text.magnifyingglass")
                         .foregroundStyle(.secondary)
                 } else {
-                    let status = appState.stravaStatus(for: workout.id)
+                    let status = appState.stravaStatus(for: currentWorkout.id)
                     HStack {
                         Label(status.displayName, systemImage: "arrow.up.circle")
                         Spacer()
@@ -105,7 +106,7 @@ struct ActivityDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    if let record = appState.stravaRecord(for: workout.id) {
+                    if let record = appState.stravaRecord(for: currentWorkout.id) {
                         if let uploadID = record.stravaUploadID, record.status != .uploaded {
                             LabeledContent("Upload ID") {
                                 Text(uploadID)
@@ -136,7 +137,7 @@ struct ActivityDetailView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         Button {
-                            appState.retryStravaUpload(workout: workout)
+                            appState.retryStravaUpload(workout: currentWorkout)
                         } label: {
                             Label(stravaActionTitle(for: status), systemImage: "arrow.clockwise")
                         }
@@ -151,7 +152,7 @@ struct ActivityDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(workout.source == .healthKit ? "This deletes the workout from Apple Health and removes Tracker edits." : "This removes the activity from Tracker.")
+            Text(currentWorkout.source == .healthKit ? "This deletes the workout from Apple Health and removes Tracker edits." : "This removes the activity from Tracker.")
         }
         .alert("Could Not Delete Activity", isPresented: Binding(
             get: { deleteError != nil },
@@ -165,7 +166,7 @@ struct ActivityDetailView: View {
 
     private func deleteWorkout() async {
         isDeleting = true
-        let deleted = await appState.deleteWorkout(workout)
+        let deleted = await appState.deleteWorkout(appState.latestWorkout(for: workout.id) ?? workout)
         isDeleting = false
         if deleted {
             dismiss()

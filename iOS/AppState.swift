@@ -108,6 +108,9 @@ final class AppState {
 
     private let settingsStore = SettingsStore()
     private var settingsObserver: NSObjectProtocol?
+    private var healthRefreshGeneration = 0
+    private var healthDetailLoadTask: Task<Void, Never>?
+    private var healthDetailLoadingIDs = Set<UUID>()
 
     init() {
         self.settings = settingsStore.loadSettings()
@@ -144,20 +147,26 @@ final class AppState {
     }
 
     func refreshHealthData() async {
+        healthRefreshGeneration += 1
+        let generation = healthRefreshGeneration
+        healthDetailLoadTask?.cancel()
         isLoadingWorkouts = true
-        defer { isLoadingWorkouts = false }
 
         do {
             try await healthKit.requestAuthorization()
-            if let healthMetrics = try? await healthKit.loadUserMetrics() {
-                _ = applyHealthMetrics(healthMetrics, overwrite: false)
-            }
-            let healthWorkouts = try await healthKit.loadRecentWorkouts(limit: 50)
-            workouts = healthWorkouts
-            enqueueAutoUploadsIfNeeded()
-            await processStravaQueue()
+            let healthWorkouts = try await healthKit.loadRecentWorkouts(limit: 50, includesDetails: false)
+            guard generation == healthRefreshGeneration else { return }
+            workouts = mergedWithExistingDetails(healthWorkouts)
+            healthDetailLoadingIDs = Set(healthWorkouts.map(\.id))
             authorizationMessage = healthWorkouts.isEmpty ? "No supported Apple Health workouts were found." : nil
+            isLoadingWorkouts = false
+            healthDetailLoadTask = Task { [weak self] in
+                await self?.loadHealthDetails(for: healthWorkouts, generation: generation)
+            }
         } catch {
+            guard generation == healthRefreshGeneration else { return }
+            healthDetailLoadingIDs = []
+            isLoadingWorkouts = false
             authorizationMessage = error.localizedDescription
         }
     }
@@ -216,6 +225,10 @@ final class AppState {
 
     func adjustedWorkout(_ workout: WorkoutSummary) -> WorkoutSummary {
         WorkoutEditApplier.adjustedWorkout(workout, edit: edit(for: workout.id))
+    }
+
+    func latestWorkout(for id: UUID) -> WorkoutSummary? {
+        workouts.first { $0.id == id }
     }
 
     var adjustedWorkouts: [WorkoutSummary] {
@@ -357,6 +370,9 @@ final class AppState {
                 continue
             }
             var knownUploadID = StravaUploadPlanner.uploadIDToPoll(for: record)
+            guard knownUploadID != nil || !healthDetailLoadingIDs.contains(workout.id) else {
+                continue
+            }
             do {
                 let uploadResult: StravaUploadResult
 
@@ -419,6 +435,60 @@ final class AppState {
             stravaUploads[index] = record
         } else {
             stravaUploads.append(record)
+        }
+    }
+
+    private func loadHealthDetails(for metadataWorkouts: [WorkoutSummary], generation: Int) async {
+        if let healthMetrics = try? await healthKit.loadUserMetrics(), generation == healthRefreshGeneration {
+            _ = applyHealthMetrics(healthMetrics, overwrite: false)
+        }
+
+        for workout in metadataWorkouts {
+            guard !Task.isCancelled, generation == healthRefreshGeneration else { return }
+            guard let detailedWorkout = try? await healthKit.loadWorkoutDetails(for: workout) else {
+                healthDetailLoadingIDs.remove(workout.id)
+                continue
+            }
+            guard !Task.isCancelled, generation == healthRefreshGeneration else { return }
+            upsertWorkout(detailedWorkout)
+            healthDetailLoadingIDs.remove(workout.id)
+        }
+
+        guard !Task.isCancelled, generation == healthRefreshGeneration else { return }
+        enqueueAutoUploadsIfNeeded()
+        await processStravaQueue()
+    }
+
+    private func upsertWorkout(_ workout: WorkoutSummary) {
+        if let index = workouts.firstIndex(where: { $0.id == workout.id }) {
+            workouts[index] = workout
+        } else {
+            workouts.append(workout)
+            workouts.sort { $0.startDate > $1.startDate }
+        }
+    }
+
+    private func mergedWithExistingDetails(_ metadataWorkouts: [WorkoutSummary]) -> [WorkoutSummary] {
+        metadataWorkouts.map { metadata in
+            guard let existing = workouts.first(where: { $0.id == metadata.id }) else {
+                return metadata
+            }
+
+            return WorkoutSummary(
+                id: metadata.id,
+                source: metadata.source,
+                activity: metadata.activity,
+                startDate: metadata.startDate,
+                endDate: metadata.endDate,
+                duration: metadata.duration,
+                distanceMeters: metadata.distanceMeters,
+                activeEnergyKilocalories: metadata.activeEnergyKilocalories,
+                averageHeartRate: existing.averageHeartRate,
+                maxHeartRate: existing.maxHeartRate,
+                route: existing.route,
+                heartRateSamples: existing.heartRateSamples,
+                stravaState: metadata.stravaState
+            )
         }
     }
 

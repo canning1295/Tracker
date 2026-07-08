@@ -20,15 +20,76 @@ private enum SummaryRangePreset: String, CaseIterable, Identifiable {
     }
 }
 
+private enum SummaryActivityFilter: Hashable, Identifiable {
+    case all
+    case allRuns
+    case allWalks
+    case activity(WorkoutActivity)
+
+    var id: String {
+        switch self {
+        case .all:
+            return "all"
+        case .allRuns:
+            return "all-runs"
+        case .allWalks:
+            return "all-walks"
+        case .activity(let activity):
+            return activity.id
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .all:
+            return "All Activities"
+        case .allRuns:
+            return "All Runs"
+        case .allWalks:
+            return "All Walks"
+        case .activity(let activity):
+            return Self.activityName(activity)
+        }
+    }
+
+    static var pickerOptions: [SummaryActivityFilter] {
+        [.all, .allRuns, .allWalks] + WorkoutActivity.allCases.map { .activity($0) }
+    }
+
+    func includes(_ activity: WorkoutActivity) -> Bool {
+        switch self {
+        case .all:
+            return true
+        case .allRuns:
+            return activity == .outdoorRun || activity == .indoorRun
+        case .allWalks:
+            return activity == .outdoorWalk || activity == .indoorWalk
+        case .activity(let selectedActivity):
+            return activity == selectedActivity
+        }
+    }
+
+    private static func activityName(_ activity: WorkoutActivity) -> String {
+        switch activity {
+        case .weights:
+            return activity.displayName
+        default:
+            return "\(activity.environment.displayName) \(activity.displayName)"
+        }
+    }
+}
+
 struct SummaryView: View {
     @Environment(AppState.self) private var appState
     @State private var rangePreset: SummaryRangePreset = .week
+    @State private var activityFilter: SummaryActivityFilter = .all
     @State private var anchorDate = Date()
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -6, to: Date()) ?? Date()
     @State private var customEnd = Date()
 
     var body: some View {
-        let workouts = appState.adjustedWorkouts
+        let allWorkouts = appState.adjustedWorkouts
+        let workouts = filteredWorkouts(allWorkouts)
         let interval = selectedInterval
         let summary = SummaryEngine.summary(
             workouts: workouts,
@@ -47,6 +108,13 @@ struct SummaryView: View {
                 Picker("Period", selection: $rangePreset) {
                     ForEach(SummaryRangePreset.allCases) { preset in
                         Text(preset.displayName).tag(preset)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Picker("Activity", selection: $activityFilter) {
+                    ForEach(SummaryActivityFilter.pickerOptions) { filter in
+                        Text(filter.displayName).tag(filter)
                     }
                 }
                 .pickerStyle(.menu)
@@ -175,6 +243,10 @@ struct SummaryView: View {
         .navigationTitle("Summary")
     }
 
+    private func filteredWorkouts(_ workouts: [WorkoutSummary]) -> [WorkoutSummary] {
+        workouts.filter { activityFilter.includes($0.activity) }
+    }
+
     private var selectedInterval: DateInterval {
         let calendar = Calendar.current
         switch rangePreset {
@@ -197,20 +269,46 @@ struct SummaryView: View {
     }
 
     private func summaryHeader(for interval: DateInterval) -> String {
-        let calendar = Calendar.current
+        let dateRange = formattedDateRange(for: interval)
         switch rangePreset {
         case .day:
-            return anchorDate.formatted(date: .abbreviated, time: .omitted)
+            return "Day of \(dateRange)"
         case .week:
-            return "Week of \(interval.start.formatted(date: .abbreviated, time: .omitted))"
+            return "Week of \(dateRange)"
         case .month:
-            return anchorDate.formatted(.dateTime.month(.wide).year())
+            return "Month of \(dateRange)"
         case .year:
-            return anchorDate.formatted(.dateTime.year())
+            return "Year of \(dateRange)"
         case .custom:
-            let endInclusive = calendar.date(byAdding: .day, value: -1, to: interval.end) ?? interval.end
-            return "\(interval.start.formatted(date: .abbreviated, time: .omitted)) - \(endInclusive.formatted(date: .abbreviated, time: .omitted))"
+            return "Custom \(dateRange)"
         }
+    }
+
+    private func formattedDateRange(for interval: DateInterval) -> String {
+        let calendar = Calendar.current
+        let start = interval.start
+        let end = calendar.date(byAdding: .day, value: -1, to: interval.end) ?? interval.end
+        let startComponents = calendar.dateComponents([.year, .month], from: start)
+        let endComponents = calendar.dateComponents([.year, .month], from: end)
+
+        if calendar.isDate(start, inSameDayAs: end) {
+            return start.formatted(.dateTime.month(.wide).day().year())
+        }
+
+        if startComponents.year == endComponents.year, startComponents.month == endComponents.month {
+            let month = start.formatted(.dateTime.month(.wide))
+            let startDay = start.formatted(.dateTime.day())
+            let endDayAndYear = end.formatted(.dateTime.day().year())
+            return "\(month) \(startDay) - \(endDayAndYear)"
+        }
+
+        if startComponents.year == endComponents.year {
+            let startMonthAndDay = start.formatted(.dateTime.month(.wide).day())
+            let endMonthDayAndYear = end.formatted(.dateTime.month(.wide).day().year())
+            return "\(startMonthAndDay) - \(endMonthDayAndYear)"
+        }
+
+        return "\(start.formatted(.dateTime.month(.wide).day().year())) - \(end.formatted(.dateTime.month(.wide).day().year()))"
     }
 
     private func vo2Value(_ value: Double) -> String {

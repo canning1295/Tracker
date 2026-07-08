@@ -119,7 +119,7 @@ final class HealthKitClient {
         }
     }
 
-    func loadRecentWorkouts(limit: Int) async throws -> [WorkoutSummary] {
+    func loadRecentWorkouts(limit: Int, includesDetails: Bool = true) async throws -> [WorkoutSummary] {
         let workouts: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
             let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
             let query = HKSampleQuery(sampleType: .workoutType(), predicate: nil, limit: limit, sortDescriptors: [sort]) { _, samples, error in
@@ -138,9 +138,7 @@ final class HealthKitClient {
             guard let activity = WorkoutActivity.fromHealthKit(activityType: workout.workoutActivityType, isIndoor: workout.isIndoorWorkout) else {
                 continue
             }
-            let samples = (try? await heartRateSamples(for: workout)) ?? []
-            let heartRate = HeartRateSampleStatistics.summary(samples: samples, workoutEnd: workout.endDate)
-            let route = activity.environment == .outdoor ? ((try? await routePoints(for: workout)) ?? []) : []
+            let details = includesDetails ? await workoutDetails(for: workout, activity: activity) : WorkoutDetails.empty
             summaries.append(
                 WorkoutSummary(
                     id: UUID(uuidString: workout.uuid.uuidString) ?? UUID(),
@@ -151,15 +149,70 @@ final class HealthKitClient {
                     duration: workout.duration,
                     distanceMeters: distanceMeters(for: workout, activity: activity),
                     activeEnergyKilocalories: activeEnergyKilocalories(for: workout),
-                    averageHeartRate: heartRate.average,
-                    maxHeartRate: heartRate.maximum,
-                    route: route,
-                    heartRateSamples: samples,
+                    averageHeartRate: details.averageHeartRate,
+                    maxHeartRate: details.maxHeartRate,
+                    route: details.route,
+                    heartRateSamples: details.heartRateSamples,
                     stravaState: .notUploaded
                 )
             )
         }
         return summaries
+    }
+
+    func loadWorkoutDetails(for summary: WorkoutSummary) async throws -> WorkoutSummary {
+        let workout = try await workout(id: summary.id)
+        guard let activity = WorkoutActivity.fromHealthKit(activityType: workout.workoutActivityType, isIndoor: workout.isIndoorWorkout) else {
+            return summary
+        }
+
+        let details = await workoutDetails(for: workout, activity: activity)
+        return WorkoutSummary(
+            id: summary.id,
+            source: summary.source,
+            activity: activity,
+            startDate: workout.startDate,
+            endDate: workout.endDate,
+            duration: workout.duration,
+            distanceMeters: distanceMeters(for: workout, activity: activity),
+            activeEnergyKilocalories: activeEnergyKilocalories(for: workout),
+            averageHeartRate: details.averageHeartRate,
+            maxHeartRate: details.maxHeartRate,
+            route: details.route,
+            heartRateSamples: details.heartRateSamples,
+            stravaState: summary.stravaState
+        )
+    }
+
+    private func workout(id: UUID) async throws -> HKWorkout {
+        try await withCheckedThrowingContinuation { continuation in
+            let predicate = HKQuery.predicateForObject(with: id)
+            let query = HKSampleQuery(sampleType: .workoutType(), predicate: predicate, limit: 1, sortDescriptors: nil) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let workout = (samples as? [HKWorkout])?.first else {
+                    continuation.resume(throwing: HealthKitClientError.workoutNotFound)
+                    return
+                }
+                continuation.resume(returning: workout)
+            }
+            self.store.execute(query)
+        }
+    }
+
+    private func workoutDetails(for workout: HKWorkout, activity: WorkoutActivity) async -> WorkoutDetails {
+        let samples = (try? await heartRateSamples(for: workout)) ?? []
+        let heartRate = HeartRateSampleStatistics.summary(samples: samples, workoutEnd: workout.endDate)
+        let route = activity.environment == .outdoor ? ((try? await routePoints(for: workout)) ?? []) : []
+        return WorkoutDetails(
+            route: route,
+            heartRateSamples: samples,
+            averageHeartRate: heartRate.average,
+            maxHeartRate: heartRate.maximum
+        )
     }
 
     private func heartRateSamples(for workout: HKWorkout) async throws -> [HeartRateSample] {
@@ -328,6 +381,15 @@ enum HealthKitClientError: LocalizedError {
             return "Apple Health did not delete the workout."
         }
     }
+}
+
+private struct WorkoutDetails {
+    var route: [RoutePoint]
+    var heartRateSamples: [HeartRateSample]
+    var averageHeartRate: Int?
+    var maxHeartRate: Int?
+
+    static let empty = WorkoutDetails(route: [], heartRateSamples: [], averageHeartRate: nil, maxHeartRate: nil)
 }
 
 private extension HKWorkout {
