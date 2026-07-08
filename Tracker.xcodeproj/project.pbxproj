@@ -73,6 +73,8 @@
 		D98CB9E5281E9C9EF09056A8 /* TrackerWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E64C91FC389CAF44DF1F96A /* TrackerWatchApp.swift */; };
 		D9AEB037E8C316D80994DB6F /* WorkoutModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCE999202040DE9A2C4D35A8 /* WorkoutModels.swift */; };
 		DDD359C2D983BE663FC6047F /* SettingsActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58C5469183C4D825F87AA046 /* SettingsActions.swift */; };
+		DEE50F42883FE6C38BF9D047 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 5237F7635A732819192DF28C /* LaunchScreen.storyboard */; };
+		E06CCB5913F3F38035C7CB58 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 5237F7635A732819192DF28C /* LaunchScreen.storyboard */; };
 		E4B5477FA9A3DDCAF9949771 /* WorkoutCoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40169A77AFF966E449EBD56A /* WorkoutCoreTests.swift */; };
 		E5D93F38BB2442D58BBE817E /* TrackerComplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F4996CC63651150E9CF5E69 /* TrackerComplication.swift */; };
 		EABB75E314882B1CDFFEBE42 /* SettingsActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58C5469183C4D825F87AA046 /* SettingsActions.swift */; };
@@ -141,6 +143,7 @@
 		4A19F183AA221D2F4F422C43 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		4DDD16E042B15097C09A9467 /* HealthKitClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitClient.swift; sourceTree = "<group>"; };
 		50E045BE914B1AC982E80926 /* AppRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRootView.swift; sourceTree = "<group>"; };
+		5237F7635A732819192DF28C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		55230DA7F1A29B3C7C9FE4C2 /* WatchRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRootView.swift; sourceTree = "<group>"; };
 		58C5469183C4D825F87AA046 /* SettingsActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsActions.swift; sourceTree = "<group>"; };
 		58EAD82AE001648DA830217D /* ActiveWorkoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveWorkoutView.swift; sourceTree = "<group>"; };
@@ -267,6 +270,7 @@
 				E6FF6FD85852A1DD3A329E82 /* Info.plist */,
 				6E44F66E4FE8715E9E542FDD /* IntervalWorkoutListView.swift */,
 				4A19F183AA221D2F4F422C43 /* KeychainStore.swift */,
+				5237F7635A732819192DF28C /* LaunchScreen.storyboard */,
 				98137052DBE57EC011D3E4A1 /* LoadingViews.swift */,
 				EC02F86078967BE976ACAD3E /* PhoneConnectivityClient.swift */,
 				9452CC272E3FBB0027ADD646 /* SettingsView.swift */,
@@ -436,6 +440,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				32BDCFEF2EDB83D378180186 /* Assets.xcassets in Resources */,
+				DEE50F42883FE6C38BF9D047 /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -444,6 +449,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				72C552C8B3304AD38E1C7492 /* Assets.xcassets in Resources */,
+				E06CCB5913F3F38035C7CB58 /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
