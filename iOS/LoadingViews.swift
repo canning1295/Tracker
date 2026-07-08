@@ -1,6 +1,14 @@
 import SwiftUI
 
 enum LoadingPhraseProvider {
+    static let startupPhrases = [
+        "Reticulating splits...",
+        "Negotiating with HealthKit...",
+        "Going DEFCON 5. Launching all split calculations.",
+        "Finding yesterday's motivation...",
+        "Warming up the tiny treadmill..."
+    ]
+
     static let healthImportPhrases = [
         "Reticulating splits...",
         "Negotiating with HealthKit...",
