@@ -19,6 +19,7 @@ struct DeviceReadinessItem: Identifiable, Equatable {
 final class AppState {
     var settings: WorkoutSettings {
         didSet {
+            summaryRevision += 1
             settingsStore.saveSettings(settings)
             connectivity.send(settings: settings, intervals: intervals)
         }
@@ -31,9 +32,14 @@ final class AppState {
         }
     }
 
-    var workouts: [WorkoutSummary] = []
+    var workouts: [WorkoutSummary] = [] {
+        didSet {
+            summaryRevision += 1
+        }
+    }
     var activityEdits: [ActivityEdit] {
         didSet {
+            summaryRevision += 1
             settingsStore.saveActivityEdits(activityEdits)
         }
     }
@@ -44,6 +50,7 @@ final class AppState {
     }
     var authorizationMessage: String?
     var isLoadingWorkouts = false
+    private(set) var summaryRevision = 0
     var healthMetricsMessage: String?
     var stravaClientID: String
     var stravaClientSecret: String

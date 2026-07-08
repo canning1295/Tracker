@@ -616,6 +616,45 @@ enum SummaryEngine {
     }
 }
 
+enum SummaryPeriodFormatter {
+    static func dateRangeText(for interval: DateInterval, calendar: Calendar = .current, locale: Locale = .current) -> String {
+        let start = interval.start
+        let end = calendar.date(byAdding: .day, value: -1, to: interval.end) ?? interval.end
+        let startComponents = calendar.dateComponents([.year, .month, .day], from: start)
+        let endComponents = calendar.dateComponents([.year, .month, .day], from: end)
+
+        guard let startDay = startComponents.day,
+              let endDay = endComponents.day,
+              let startYear = startComponents.year,
+              let endYear = endComponents.year else {
+            return "\(start.formatted(.dateTime.month(.wide).day().year())) - \(end.formatted(.dateTime.month(.wide).day().year()))"
+        }
+
+        if calendar.isDate(start, inSameDayAs: end) {
+            return "\(monthName(for: start, calendar: calendar, locale: locale)) \(startDay), \(startYear)"
+        }
+
+        if startComponents.year == endComponents.year, startComponents.month == endComponents.month {
+            return "\(monthName(for: start, calendar: calendar, locale: locale)) \(startDay) - \(endDay), \(startYear)"
+        }
+
+        if startComponents.year == endComponents.year {
+            return "\(monthName(for: start, calendar: calendar, locale: locale)) \(startDay) - \(monthName(for: end, calendar: calendar, locale: locale)) \(endDay), \(startYear)"
+        }
+
+        return "\(monthName(for: start, calendar: calendar, locale: locale)) \(startDay), \(startYear) - \(monthName(for: end, calendar: calendar, locale: locale)) \(endDay), \(endYear)"
+    }
+
+    private static func monthName(for date: Date, calendar: Calendar, locale: Locale) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = locale
+        formatter.dateFormat = "MMMM"
+        return formatter.string(from: date)
+    }
+}
+
 enum PauseDetector {
     static func candidatePauseRanges(route: [RoutePoint], minimumDuration: TimeInterval = 30, radiusMeters: Double = 20) -> [ClosedRange<Date>] {
         guard route.count > 2 else { return [] }

@@ -410,6 +410,36 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(summary.heartRateZoneDurations[.zone5], 30)
     }
 
+    func testSummaryPeriodFormatterUsesReadableSameMonthDateRange() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 5)))
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 12)))
+
+        let label = SummaryPeriodFormatter.dateRangeText(
+            for: DateInterval(start: start, end: end),
+            calendar: calendar,
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+
+        XCTAssertEqual(label, "July 5 - 11, 2026")
+    }
+
+    func testSummaryPeriodFormatterUsesReadableCrossMonthDateRange() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        let start = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 6, day: 29)))
+        let end = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 6)))
+
+        let label = SummaryPeriodFormatter.dateRangeText(
+            for: DateInterval(start: start, end: end),
+            calendar: calendar,
+            locale: Locale(identifier: "en_US_POSIX")
+        )
+
+        XCTAssertEqual(label, "June 29 - July 5, 2026")
+    }
+
     func testHealthKitActiveCaloriesAreNotBMRAdjustedAgain() {
         let activeCalories = WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: 400)
 

@@ -79,6 +79,60 @@ private enum SummaryActivityFilter: Hashable, Identifiable {
     }
 }
 
+private struct SummaryRefreshKey: Hashable {
+    var rangePreset: SummaryRangePreset
+    var activityFilter: SummaryActivityFilter
+    var intervalStart: Date
+    var intervalEnd: Date
+    var appRevision: Int
+}
+
+private struct SummaryComputationInput {
+    var workouts: [WorkoutSummary]
+    var activityEdits: [ActivityEdit]
+    var heartRateSettings: HeartRateSettings
+    var userMetrics: UserMetrics
+    var interval: DateInterval
+    var activityFilter: SummaryActivityFilter
+}
+
+private struct SummarySnapshot {
+    var interval: DateInterval
+    var summary: WeeklySummary
+    var recentWeeks: [WeeklySummary]
+    var vo2History: VO2MaxEstimator.HistorySummary?
+
+    init(input: SummaryComputationInput) {
+        let editByWorkoutID = input.activityEdits.reduce(into: [UUID: ActivityEdit]()) { partial, edit in
+            partial[edit.workoutID] = edit
+        }
+        let adjustedWorkouts = input.workouts.map { workout in
+            WorkoutEditApplier.adjustedWorkout(
+                workout,
+                edit: editByWorkoutID[workout.id] ?? ActivityEdit(workoutID: workout.id)
+            )
+        }
+        let filteredWorkouts = adjustedWorkouts.filter { input.activityFilter.includes($0.activity) }
+
+        interval = input.interval
+        summary = SummaryEngine.summary(
+            workouts: filteredWorkouts,
+            heartRateSettings: input.heartRateSettings,
+            interval: input.interval
+        )
+        recentWeeks = SummaryEngine.recentWeeklySummaries(
+            workouts: filteredWorkouts,
+            heartRateSettings: input.heartRateSettings,
+            weekCount: 4
+        )
+        vo2History = VO2MaxEstimator.history(
+            workouts: filteredWorkouts,
+            userMetrics: input.userMetrics,
+            settings: input.heartRateSettings
+        )
+    }
+}
+
 struct SummaryView: View {
     @Environment(AppState.self) private var appState
     @State private var rangePreset: SummaryRangePreset = .week
@@ -86,22 +140,11 @@ struct SummaryView: View {
     @State private var anchorDate = Date()
     @State private var customStart = Calendar.current.date(byAdding: .day, value: -6, to: Date()) ?? Date()
     @State private var customEnd = Date()
+    @State private var summarySnapshot: SummarySnapshot?
+    @State private var isLoadingSummary = false
 
     var body: some View {
-        let allWorkouts = appState.adjustedWorkouts
-        let workouts = filteredWorkouts(allWorkouts)
-        let interval = selectedInterval
-        let summary = SummaryEngine.summary(
-            workouts: workouts,
-            heartRateSettings: appState.settings.heartRate,
-            interval: interval
-        )
-        let recentWeeks = SummaryEngine.recentWeeklySummaries(workouts: workouts, heartRateSettings: appState.settings.heartRate, weekCount: 4)
-        let vo2History = VO2MaxEstimator.history(
-            workouts: workouts,
-            userMetrics: appState.settings.userMetrics,
-            settings: appState.settings.heartRate
-        )
+        let refreshKey = summaryRefreshKey
 
         List {
             Section("Range") {
@@ -119,6 +162,16 @@ struct SummaryView: View {
                 }
                 .pickerStyle(.menu)
 
+                if isLoadingSummary {
+                    HStack {
+                        Spacer()
+                        ThinkingIndicator()
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                    .accessibilityLabel("Updating Summary")
+                }
+
                 if rangePreset == .custom {
                     DatePicker(selection: $customStart, displayedComponents: .date) {
                         Label("Start", systemImage: "calendar")
@@ -133,6 +186,33 @@ struct SummaryView: View {
                 }
             }
 
+            if let summarySnapshot {
+                summarySections(for: summarySnapshot)
+            } else {
+                Section {
+                    HStack {
+                        Spacer()
+                        ThinkingIndicator()
+                        Spacer()
+                    }
+                    .padding(.vertical, 12)
+                    .accessibilityLabel("Loading Summary")
+                }
+            }
+        }
+        .navigationTitle("Summary")
+        .task(id: refreshKey) {
+            await refreshSummary(for: refreshKey)
+        }
+    }
+
+    @ViewBuilder
+    private func summarySections(for snapshot: SummarySnapshot) -> some View {
+        let summary = snapshot.summary
+        let recentWeeks = snapshot.recentWeeks
+        let vo2History = snapshot.vo2History
+
+        Group {
             Section {
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
                     GridRow {
@@ -150,7 +230,7 @@ struct SummaryView: View {
                 }
                 .padding(.vertical, 4)
             } header: {
-                Text(summaryHeader(for: interval))
+                Text(summaryHeader(for: snapshot.interval))
             }
 
             if let vo2History {
@@ -240,11 +320,40 @@ struct SummaryView: View {
                 }
             }
         }
-        .navigationTitle("Summary")
     }
 
-    private func filteredWorkouts(_ workouts: [WorkoutSummary]) -> [WorkoutSummary] {
-        workouts.filter { activityFilter.includes($0.activity) }
+    private var summaryRefreshKey: SummaryRefreshKey {
+        let interval = selectedInterval
+        return SummaryRefreshKey(
+            rangePreset: rangePreset,
+            activityFilter: activityFilter,
+            intervalStart: interval.start,
+            intervalEnd: interval.end,
+            appRevision: appState.summaryRevision
+        )
+    }
+
+    private func refreshSummary(for key: SummaryRefreshKey) async {
+        isLoadingSummary = true
+        await Task.yield()
+        guard !Task.isCancelled else { return }
+
+        let input = SummaryComputationInput(
+            workouts: appState.workouts,
+            activityEdits: appState.activityEdits,
+            heartRateSettings: appState.settings.heartRate,
+            userMetrics: appState.settings.userMetrics,
+            interval: DateInterval(start: key.intervalStart, end: key.intervalEnd),
+            activityFilter: key.activityFilter
+        )
+
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            SummarySnapshot(input: input)
+        }.value
+
+        guard !Task.isCancelled else { return }
+        summarySnapshot = snapshot
+        isLoadingSummary = false
     }
 
     private var selectedInterval: DateInterval {
@@ -285,30 +394,7 @@ struct SummaryView: View {
     }
 
     private func formattedDateRange(for interval: DateInterval) -> String {
-        let calendar = Calendar.current
-        let start = interval.start
-        let end = calendar.date(byAdding: .day, value: -1, to: interval.end) ?? interval.end
-        let startComponents = calendar.dateComponents([.year, .month], from: start)
-        let endComponents = calendar.dateComponents([.year, .month], from: end)
-
-        if calendar.isDate(start, inSameDayAs: end) {
-            return start.formatted(.dateTime.month(.wide).day().year())
-        }
-
-        if startComponents.year == endComponents.year, startComponents.month == endComponents.month {
-            let month = start.formatted(.dateTime.month(.wide))
-            let startDay = start.formatted(.dateTime.day())
-            let endDayAndYear = end.formatted(.dateTime.day().year())
-            return "\(month) \(startDay) - \(endDayAndYear)"
-        }
-
-        if startComponents.year == endComponents.year {
-            let startMonthAndDay = start.formatted(.dateTime.month(.wide).day())
-            let endMonthDayAndYear = end.formatted(.dateTime.month(.wide).day().year())
-            return "\(startMonthAndDay) - \(endMonthDayAndYear)"
-        }
-
-        return "\(start.formatted(.dateTime.month(.wide).day().year())) - \(end.formatted(.dateTime.month(.wide).day().year()))"
+        SummaryPeriodFormatter.dateRangeText(for: interval)
     }
 
     private func vo2Value(_ value: Double) -> String {
