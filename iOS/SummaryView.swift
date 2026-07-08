@@ -162,16 +162,6 @@ struct SummaryView: View {
                 }
                 .pickerStyle(.menu)
 
-                if isLoadingSummary {
-                    HStack {
-                        Spacer()
-                        ThinkingIndicator()
-                        Spacer()
-                    }
-                    .listRowBackground(Color.clear)
-                    .accessibilityLabel("Updating Summary")
-                }
-
                 if rangePreset == .custom {
                     DatePicker(selection: $customStart, displayedComponents: .date) {
                         Label("Start", systemImage: "calendar")
@@ -201,6 +191,13 @@ struct SummaryView: View {
             }
         }
         .navigationTitle("Summary")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if isLoadingSummary, summarySnapshot != nil {
+                    ThinkingIndicator()
+                }
+            }
+        }
         .task(id: refreshKey) {
             await refreshSummary(for: refreshKey)
         }
@@ -335,7 +332,11 @@ struct SummaryView: View {
 
     private func refreshSummary(for key: SummaryRefreshKey) async {
         isLoadingSummary = true
-        await Task.yield()
+        do {
+            try await Task.sleep(for: .milliseconds(150))
+        } catch {
+            return
+        }
         guard !Task.isCancelled else { return }
 
         let input = SummaryComputationInput(
