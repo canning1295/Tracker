@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Tracker</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER).launcher</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>tracker</string>
+			</array>
+		</dict>
+	</array>
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Workout Tracker</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>Workout Tracker</string>
+		</dict>
+	</array>
+	<key>NSHealthShareUsageDescription</key>
+	<string>Tracker reads heart rate, calories, and distance during workouts.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Tracker writes completed workouts and outdoor routes to Apple Health.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Tracker uses location during outdoor workouts to record and display your route.</string>
+	<key>WKApplication</key>
+	<true/>
+	<key>WKCompanionAppBundleIdentifier</key>
+	<string>$(TRACKER_IOS_BUNDLE_IDENTIFIER)</string>
+</dict>
+</plist>
