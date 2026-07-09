@@ -268,6 +268,16 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertFalse(settings.stravaAutoUpload)
     }
 
+    func testWorkoutSettingsRoundTripsDisabledAnnouncements() throws {
+        var settings = WorkoutSettings.defaults
+        settings.splitAnnouncementUnit = .off
+
+        let data = try JSONEncoder().encode(settings)
+        let decoded = try JSONDecoder().decode(WorkoutSettings.self, from: data)
+
+        XCTAssertEqual(decoded.splitAnnouncementUnit, .off)
+    }
+
     func testDistanceSplitAnnouncementsUsePerSplitPaceAndSelectedUnit() {
         var tracker = DistanceSplitAnnouncementTracker()
 

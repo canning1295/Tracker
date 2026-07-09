@@ -161,6 +161,7 @@ final class AppState {
     }
 
     func refreshHealthData() async {
+        guard !isLoadingWorkouts else { return }
         healthRefreshGeneration += 1
         let generation = healthRefreshGeneration
         healthDetailLoadTask?.cancel()

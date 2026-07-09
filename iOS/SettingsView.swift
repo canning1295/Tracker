@@ -31,8 +31,8 @@ struct SettingsView: View {
                 Toggle("Auto-disable Touch During Workouts", isOn: $appState.settings.autoDisableTouchOnWorkoutStart)
 
                 Picker("Announce Every", selection: $appState.settings.splitAnnouncementUnit) {
-                    ForEach(DistanceUnit.allCases) { unit in
-                        Text(unit == .miles ? "Mile" : "Kilometer").tag(unit)
+                    ForEach(WorkoutAnnouncementUnit.allCases) { unit in
+                        Text(unit.displayName).tag(unit)
                     }
                 }
             }

@@ -102,6 +102,37 @@ enum DistanceUnit: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum WorkoutAnnouncementUnit: String, Codable, CaseIterable, Identifiable {
+    case off
+    case miles
+    case kilometers
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .off: return "None"
+        case .miles: return "Mile"
+        case .kilometers: return "Kilometer"
+        }
+    }
+
+    var distanceUnit: DistanceUnit? {
+        switch self {
+        case .off: return nil
+        case .miles: return .miles
+        case .kilometers: return .kilometers
+        }
+    }
+
+    init(distanceUnit: DistanceUnit) {
+        switch distanceUnit {
+        case .miles: self = .miles
+        case .kilometers: self = .kilometers
+        }
+    }
+}
+
 enum BodyMeasurementUnit: String, Codable, CaseIterable, Identifiable {
     case imperial
     case metric
@@ -134,7 +165,7 @@ enum PaceMode: String, Codable, CaseIterable, Identifiable {
 
 struct WorkoutSettings: Codable, Equatable {
     var distanceUnit: DistanceUnit
-    var splitAnnouncementUnit: DistanceUnit
+    var splitAnnouncementUnit: WorkoutAnnouncementUnit
     var bodyMeasurementUnit: BodyMeasurementUnit
     var paceMode: PaceMode
     var rollingPaceSeconds: Int
@@ -163,7 +194,7 @@ struct WorkoutSettings: Codable, Equatable {
 
     init(
         distanceUnit: DistanceUnit,
-        splitAnnouncementUnit: DistanceUnit = .miles,
+        splitAnnouncementUnit: WorkoutAnnouncementUnit = .miles,
         bodyMeasurementUnit: BodyMeasurementUnit = .imperial,
         paceMode: PaceMode,
         rollingPaceSeconds: Int,
@@ -207,7 +238,8 @@ struct WorkoutSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         distanceUnit = try container.decodeIfPresent(DistanceUnit.self, forKey: .distanceUnit) ?? .miles
-        splitAnnouncementUnit = try container.decodeIfPresent(DistanceUnit.self, forKey: .splitAnnouncementUnit) ?? distanceUnit
+        splitAnnouncementUnit = try container.decodeIfPresent(WorkoutAnnouncementUnit.self, forKey: .splitAnnouncementUnit)
+            ?? WorkoutAnnouncementUnit(distanceUnit: distanceUnit)
         bodyMeasurementUnit = try container.decodeIfPresent(BodyMeasurementUnit.self, forKey: .bodyMeasurementUnit) ?? .imperial
         paceMode = try container.decodeIfPresent(PaceMode.self, forKey: .paceMode) ?? .rolling
         rollingPaceSeconds = try container.decodeIfPresent(Int.self, forKey: .rollingPaceSeconds) ?? 30

@@ -54,7 +54,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     private var hasLiveHealthKitDistance = false
     private var timer: Timer?
     private var distanceUnit: DistanceUnit = .miles
-    private var splitAnnouncementUnit: DistanceUnit = .miles
+    private var splitAnnouncementUnit: WorkoutAnnouncementUnit = .miles
     private var activeSplitAnnouncementUnit: DistanceUnit?
     private var splitAnnouncementTracker = DistanceSplitAnnouncementTracker()
     private var paceMode: PaceMode = .rolling
@@ -187,7 +187,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             hasLiveHealthKitDistance = false
             lastPaceRefreshElapsedSeconds = nil
             lastIntervalCueID = initialIntervalCueID()
-            activeSplitAnnouncementUnit = splitAnnouncementUnit
+            activeSplitAnnouncementUnit = splitAnnouncementUnit.distanceUnit
             splitAnnouncementTracker.reset()
             snapshot = .empty
             isActive = true
