@@ -334,6 +334,79 @@ enum WorkoutFormatter {
     }
 }
 
+struct DistanceSplitAnnouncement: Equatable {
+    var unitNumber: Int
+    var splitSeconds: TimeInterval
+    var unit: DistanceUnit
+
+    var spokenText: String {
+        let totalSeconds = max(0, Int(splitSeconds.rounded()))
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        var durationParts: [String] = []
+
+        if minutes > 0 {
+            durationParts.append("\(minutes) minute\(minutes == 1 ? "" : "s")")
+        }
+        if seconds > 0 || minutes == 0 {
+            durationParts.append("\(seconds) second\(seconds == 1 ? "" : "s")")
+        }
+
+        return "\(unit.singularName.capitalized) \(unitNumber), \(durationParts.joined(separator: " ")) per \(unit.singularName)"
+    }
+}
+
+struct DistanceSplitAnnouncementTracker {
+    private(set) var completedUnitCount = 0
+    private var lastDistanceMeters = 0.0
+    private var lastElapsedSeconds: TimeInterval = 0
+    private var lastBoundaryElapsedSeconds: TimeInterval = 0
+
+    mutating func reset() {
+        completedUnitCount = 0
+        lastDistanceMeters = 0
+        lastElapsedSeconds = 0
+        lastBoundaryElapsedSeconds = 0
+    }
+
+    mutating func announcements(
+        distanceMeters: Double,
+        elapsedSeconds: TimeInterval,
+        unit: DistanceUnit
+    ) -> [DistanceSplitAnnouncement] {
+        let distance = max(0, distanceMeters)
+        let elapsed = max(lastElapsedSeconds, elapsedSeconds)
+        guard distance > lastDistanceMeters else {
+            lastElapsedSeconds = elapsed
+            return []
+        }
+
+        let previousDistance = lastDistanceMeters
+        let previousElapsed = lastElapsedSeconds
+        let distanceDelta = distance - previousDistance
+        let elapsedDelta = elapsed - previousElapsed
+        var announcements: [DistanceSplitAnnouncement] = []
+        var nextBoundary = Double(completedUnitCount + 1) * unit.metersPerUnit
+
+        while nextBoundary <= distance {
+            let boundaryProgress = min(max((nextBoundary - previousDistance) / distanceDelta, 0), 1)
+            let boundaryElapsed = previousElapsed + elapsedDelta * boundaryProgress
+            completedUnitCount += 1
+            announcements.append(DistanceSplitAnnouncement(
+                unitNumber: completedUnitCount,
+                splitSeconds: max(0, boundaryElapsed - lastBoundaryElapsedSeconds),
+                unit: unit
+            ))
+            lastBoundaryElapsedSeconds = boundaryElapsed
+            nextBoundary = Double(completedUnitCount + 1) * unit.metersPerUnit
+        }
+
+        lastDistanceMeters = distance
+        lastElapsedSeconds = elapsed
+        return announcements
+    }
+}
+
 struct SplitSummary: Equatable {
     var distanceMeters: Double
     var paceSecondsPerUnit: Double?

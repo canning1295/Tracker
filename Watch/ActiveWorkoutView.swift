@@ -47,6 +47,90 @@ struct ActiveWorkoutView: View {
     }
 }
 
+struct WatchWorkoutSummaryView: View {
+    let summary: WatchWorkoutCompletionSummary
+    let settings: WorkoutSettings
+    let onDismiss: () -> Void
+
+    private let columns = [
+        GridItem(.flexible(), spacing: 8),
+        GridItem(.flexible(), spacing: 8)
+    ]
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.green)
+
+            Text("Workout Saved")
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+
+            Text(summary.activity?.displayName ?? "Workout")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 8) {
+                    WatchSummaryMetric(title: "Time", value: WorkoutFormatter.duration(summary.elapsedSeconds))
+                    WatchSummaryMetric(title: "Act Cal", value: WorkoutFormatter.activeCalories(summary.activeEnergyKilocalories))
+
+                    if summary.activity?.recordsDistance == true {
+                        WatchSummaryMetric(
+                            title: "Distance",
+                            value: WorkoutFormatter.distance(summary.distanceMeters, unit: settings.distanceUnit)
+                        )
+                        WatchSummaryMetric(
+                            title: "Pace",
+                            value: WorkoutFormatter.pace(summaryPace, unit: settings.distanceUnit)
+                        )
+                    }
+                }
+            }
+
+            Button(action: onDismiss) {
+                Label("Done", systemImage: "checkmark")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
+        .accessibilityAddTraits(.isModal)
+    }
+
+    private var summaryPace: Double? {
+        PaceCalculator.paceSecondsPerUnit(
+            distanceMeters: summary.distanceMeters,
+            elapsedSeconds: summary.elapsedSeconds,
+            unit: settings.distanceUnit
+        )
+    }
+}
+
+private struct WatchSummaryMetric: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.headline)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
 private struct TouchControlsLockedOverlay: View {
     var body: some View {
         VStack {

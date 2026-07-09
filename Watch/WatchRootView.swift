@@ -41,60 +41,73 @@ struct WatchRootView: View {
     @State private var intervalSelectionIndex = 0
 
     var body: some View {
-        NavigationStack(path: $path) {
-            CrownMenu(
-                title: "Workout",
-                options: WatchHomeChoice.allCases,
-                selectionIndex: $homeSelectionIndex,
-                screenIndex: 0,
-                screenCount: 3,
-                onSelect: openHomeChoice,
-                fillRows: true
-            ) { choice, isSelected in
-                CrownMenuRow(title: choice.title, systemImage: choice.systemImage, isSelected: isSelected, fillHeight: true)
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: WatchRoute.self) { route in
-                switch route {
-                case .activitySelection(let environment):
-                    ActivitySelectionView(
-                        environment: environment,
-                        selectionIndex: selectionBinding(for: environment),
-                        onSelect: { activity in
-                            path.append(.startWorkout(activity))
-                        },
-                        onBack: {
-                            homeSelectionIndex = WatchHomeChoice.allCases.count - 1
-                            _ = path.popLast()
-                        }
-                    )
-                case .startWorkout(let activity):
-                    StartWorkoutView(
-                        activity: activity,
-                        onBack: {
-                            setActivitySelectionIndex(activity.environment, to: activityCount(for: activity.environment) - 1)
-                            _ = path.popLast()
-                        }
-                    )
-                case .intervalList:
-                    WatchIntervalListView(
-                        selectionIndex: $intervalSelectionIndex,
-                        onBack: {
-                            homeSelectionIndex = WatchHomeChoice.allCases.count - 1
-                            _ = path.popLast()
-                        }
-                    )
+        ZStack {
+            NavigationStack(path: $path) {
+                CrownMenu(
+                    title: "Workout",
+                    options: WatchHomeChoice.allCases,
+                    selectionIndex: $homeSelectionIndex,
+                    screenIndex: 0,
+                    screenCount: 3,
+                    onSelect: openHomeChoice,
+                    fillRows: true
+                ) { choice, isSelected in
+                    CrownMenuRow(title: choice.title, systemImage: choice.systemImage, isSelected: isSelected, fillHeight: true)
+                }
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(for: WatchRoute.self) { route in
+                    switch route {
+                    case .activitySelection(let environment):
+                        ActivitySelectionView(
+                            environment: environment,
+                            selectionIndex: selectionBinding(for: environment),
+                            onSelect: { activity in
+                                path.append(.startWorkout(activity))
+                            },
+                            onBack: {
+                                homeSelectionIndex = WatchHomeChoice.allCases.count - 1
+                                _ = path.popLast()
+                            }
+                        )
+                    case .startWorkout(let activity):
+                        StartWorkoutView(
+                            activity: activity,
+                            onBack: {
+                                setActivitySelectionIndex(activity.environment, to: activityCount(for: activity.environment) - 1)
+                                _ = path.popLast()
+                            }
+                        )
+                    case .intervalList:
+                        WatchIntervalListView(
+                            selectionIndex: $intervalSelectionIndex,
+                            onBack: {
+                                homeSelectionIndex = WatchHomeChoice.allCases.count - 1
+                                _ = path.popLast()
+                            }
+                        )
+                    }
+                }
+                .navigationDestination(isPresented: Binding(
+                    get: { workoutManager.isActive },
+                    set: { _ in }
+                )) {
+                    ActiveWorkoutView()
                 }
             }
-            .navigationDestination(isPresented: Binding(
-                get: { workoutManager.isActive },
-                set: { _ in }
-            )) {
-                ActiveWorkoutView()
+
+            if let summary = workoutManager.completedWorkoutSummary {
+                WatchWorkoutSummaryView(
+                    summary: summary,
+                    settings: watchState.settings,
+                    onDismiss: dismissWorkoutSummary
+                )
+                .zIndex(1)
             }
         }
         .overlay(alignment: .bottom) {
-            if let status = workoutManager.startStatus, !workoutManager.isActive {
+            if let status = workoutManager.startStatus,
+               !workoutManager.isActive,
+               workoutManager.completedWorkoutSummary == nil {
                 WatchStatusBanner(status: status)
                     .padding(.horizontal, 6)
                     .padding(.bottom, 2)
@@ -113,7 +126,7 @@ struct WatchRootView: View {
             consumePendingIntentStart()
         }
         .onChange(of: watchState.requestedStartActivity) { _, activity in
-            guard let activity else { return }
+            guard let activity, workoutManager.completedWorkoutSummary == nil else { return }
             start(activity)
             watchState.clearRequestedStart()
         }
@@ -124,8 +137,24 @@ struct WatchRootView: View {
     }
 
     private func consumePendingIntentStart() {
-        guard !workoutManager.isActive, let pending = watchState.consumePendingIntentStart() else { return }
+        guard !workoutManager.isActive,
+              workoutManager.completedWorkoutSummary == nil,
+              let pending = watchState.consumePendingIntentStart() else {
+            return
+        }
         start(pending)
+    }
+
+    private func dismissWorkoutSummary() {
+        workoutManager.dismissCompletedWorkoutSummary()
+        path.removeAll()
+
+        if let requested = watchState.requestedStartActivity {
+            start(requested)
+            watchState.clearRequestedStart()
+        } else {
+            consumePendingIntentStart()
+        }
     }
 
     private func start(_ activity: WorkoutActivity) {

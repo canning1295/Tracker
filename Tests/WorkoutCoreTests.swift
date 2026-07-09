@@ -258,6 +258,7 @@ final class WorkoutCoreTests: XCTestCase {
         let settings = try JSONDecoder().decode(WorkoutSettings.self, from: Data(json.utf8))
 
         XCTAssertEqual(settings.distanceUnit, .kilometers)
+        XCTAssertEqual(settings.splitAnnouncementUnit, .kilometers)
         XCTAssertEqual(settings.bodyMeasurementUnit, .imperial)
         XCTAssertEqual(settings.paceMode, .wholeWorkout)
         XCTAssertEqual(settings.rollingPaceSeconds, 45)
@@ -265,6 +266,63 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertTrue(settings.autoDisableTouchOnWorkoutStart)
         XCTAssertNil(settings.userMetrics.knownVO2Max)
         XCTAssertFalse(settings.stravaAutoUpload)
+    }
+
+    func testDistanceSplitAnnouncementsUsePerSplitPaceAndSelectedUnit() {
+        var tracker = DistanceSplitAnnouncementTracker()
+
+        XCTAssertTrue(tracker.announcements(
+            distanceMeters: 1_000,
+            elapsedSeconds: 300,
+            unit: .miles
+        ).isEmpty)
+
+        let firstMile = tracker.announcements(
+            distanceMeters: DistanceUnit.miles.metersPerUnit,
+            elapsedSeconds: 493,
+            unit: .miles
+        )
+        XCTAssertEqual(firstMile, [DistanceSplitAnnouncement(unitNumber: 1, splitSeconds: 493, unit: .miles)])
+        XCTAssertEqual(firstMile.first?.spokenText, "Mile 1, 8 minutes 13 seconds per mile")
+
+        let secondMile = tracker.announcements(
+            distanceMeters: DistanceUnit.miles.metersPerUnit * 2,
+            elapsedSeconds: 982,
+            unit: .miles
+        )
+        XCTAssertEqual(secondMile, [DistanceSplitAnnouncement(unitNumber: 2, splitSeconds: 489, unit: .miles)])
+        XCTAssertEqual(secondMile.first?.spokenText, "Mile 2, 8 minutes 9 seconds per mile")
+    }
+
+    func testDistanceSplitAnnouncementsHandleMultipleKilometerBoundaries() {
+        var tracker = DistanceSplitAnnouncementTracker()
+
+        let announcements = tracker.announcements(
+            distanceMeters: 2_000,
+            elapsedSeconds: 600,
+            unit: .kilometers
+        )
+
+        XCTAssertEqual(announcements, [
+            DistanceSplitAnnouncement(unitNumber: 1, splitSeconds: 300, unit: .kilometers),
+            DistanceSplitAnnouncement(unitNumber: 2, splitSeconds: 300, unit: .kilometers)
+        ])
+        XCTAssertEqual(announcements.last?.spokenText, "Kilometer 2, 5 minutes per kilometer")
+    }
+
+    func testWatchWorkoutCompletionPayloadRoundTrips() throws {
+        let completion = WatchWorkoutCompletion(
+            id: UUID(),
+            workoutID: UUID(),
+            activity: .outdoorRun,
+            endedAt: Date(timeIntervalSince1970: 1_750_000_000)
+        )
+
+        XCTAssertEqual(WatchWorkoutCompletion(payload: completion.payload), completion)
+
+        var legacyPayload = completion.payload
+        legacyPayload.removeValue(forKey: WatchConnectivityPayloadKey.completionID)
+        XCTAssertEqual(WatchWorkoutCompletion(payload: legacyPayload)?.id, completion.workoutID)
     }
 
     func testSettingsWriterUpdatesTouchControlsAndPostsNotification() throws {

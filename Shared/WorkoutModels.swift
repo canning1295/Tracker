@@ -87,6 +87,13 @@ enum DistanceUnit: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var singularName: String {
+        switch self {
+        case .miles: return "mile"
+        case .kilometers: return "kilometer"
+        }
+    }
+
     var metersPerUnit: Double {
         switch self {
         case .miles: return 1609.344
@@ -127,6 +134,7 @@ enum PaceMode: String, Codable, CaseIterable, Identifiable {
 
 struct WorkoutSettings: Codable, Equatable {
     var distanceUnit: DistanceUnit
+    var splitAnnouncementUnit: DistanceUnit
     var bodyMeasurementUnit: BodyMeasurementUnit
     var paceMode: PaceMode
     var rollingPaceSeconds: Int
@@ -140,6 +148,7 @@ struct WorkoutSettings: Codable, Equatable {
 
     static let defaults = WorkoutSettings(
         distanceUnit: .miles,
+        splitAnnouncementUnit: .miles,
         bodyMeasurementUnit: .imperial,
         paceMode: .rolling,
         rollingPaceSeconds: 30,
@@ -154,6 +163,7 @@ struct WorkoutSettings: Codable, Equatable {
 
     init(
         distanceUnit: DistanceUnit,
+        splitAnnouncementUnit: DistanceUnit = .miles,
         bodyMeasurementUnit: BodyMeasurementUnit = .imperial,
         paceMode: PaceMode,
         rollingPaceSeconds: Int,
@@ -166,6 +176,7 @@ struct WorkoutSettings: Codable, Equatable {
         stravaAutoUpload: Bool
     ) {
         self.distanceUnit = distanceUnit
+        self.splitAnnouncementUnit = splitAnnouncementUnit
         self.bodyMeasurementUnit = bodyMeasurementUnit
         self.paceMode = paceMode
         self.rollingPaceSeconds = rollingPaceSeconds
@@ -180,6 +191,7 @@ struct WorkoutSettings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case distanceUnit
+        case splitAnnouncementUnit
         case bodyMeasurementUnit
         case paceMode
         case rollingPaceSeconds
@@ -195,6 +207,7 @@ struct WorkoutSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         distanceUnit = try container.decodeIfPresent(DistanceUnit.self, forKey: .distanceUnit) ?? .miles
+        splitAnnouncementUnit = try container.decodeIfPresent(DistanceUnit.self, forKey: .splitAnnouncementUnit) ?? distanceUnit
         bodyMeasurementUnit = try container.decodeIfPresent(BodyMeasurementUnit.self, forKey: .bodyMeasurementUnit) ?? .imperial
         paceMode = try container.decodeIfPresent(PaceMode.self, forKey: .paceMode) ?? .rolling
         rollingPaceSeconds = try container.decodeIfPresent(Int.self, forKey: .rollingPaceSeconds) ?? 30
@@ -641,9 +654,54 @@ enum WatchConnectivityPayloadKey {
     static let startActivity = "startActivity"
     static let settings = "settings"
     static let workoutFinished = "workoutFinished"
+    static let completionID = "completionID"
     static let workoutID = "workoutID"
     static let activity = "activity"
     static let endedAt = "endedAt"
+}
+
+struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
+    var id: UUID
+    var workoutID: UUID
+    var activity: WorkoutActivity?
+    var endedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        workoutID: UUID,
+        activity: WorkoutActivity?,
+        endedAt: Date
+    ) {
+        self.id = id
+        self.workoutID = workoutID
+        self.activity = activity
+        self.endedAt = endedAt
+    }
+
+    init?(payload: [String: Any]) {
+        guard payload[WatchConnectivityPayloadKey.workoutFinished] as? Bool == true,
+              let workoutIDValue = payload[WatchConnectivityPayloadKey.workoutID] as? String,
+              let workoutID = UUID(uuidString: workoutIDValue),
+              let endedAt = payload[WatchConnectivityPayloadKey.endedAt] as? Date else {
+            return nil
+        }
+
+        let completionID = (payload[WatchConnectivityPayloadKey.completionID] as? String)
+            .flatMap(UUID.init(uuidString:)) ?? workoutID
+        let activity = (payload[WatchConnectivityPayloadKey.activity] as? String)
+            .flatMap(WorkoutActivity.init(rawValue:))
+        self.init(id: completionID, workoutID: workoutID, activity: activity, endedAt: endedAt)
+    }
+
+    var payload: [String: Any] {
+        [
+            WatchConnectivityPayloadKey.workoutFinished: true,
+            WatchConnectivityPayloadKey.completionID: id.uuidString,
+            WatchConnectivityPayloadKey.workoutID: workoutID.uuidString,
+            WatchConnectivityPayloadKey.activity: activity?.rawValue ?? "",
+            WatchConnectivityPayloadKey.endedAt: endedAt
+        ]
+    }
 }
 
 enum PendingWorkoutStartStore {

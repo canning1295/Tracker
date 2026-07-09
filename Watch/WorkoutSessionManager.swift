@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreLocation
 import Foundation
 import HealthKit
@@ -22,6 +23,14 @@ enum WorkoutStartStatus: Equatable {
     }
 }
 
+struct WatchWorkoutCompletionSummary: Identifiable, Equatable {
+    var id: UUID
+    var activity: WorkoutActivity?
+    var elapsedSeconds: TimeInterval
+    var distanceMeters: Double
+    var activeEnergyKilocalories: Double
+}
+
 final class WorkoutSessionManager: NSObject, ObservableObject {
     @Published private(set) var snapshot = WorkoutMetricSnapshot.empty
     @Published private(set) var activity: WorkoutActivity?
@@ -31,6 +40,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     @Published private(set) var isStarting = false
     @Published private(set) var isFinishing = false
     @Published private(set) var startStatus: WorkoutStartStatus?
+    @Published private(set) var completedWorkoutSummary: WatchWorkoutCompletionSummary?
 
     private let healthStore = HKHealthStore()
     private var session: HKWorkoutSession?
@@ -41,13 +51,18 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     private var activeSegmentStartDate: Date?
     private var accumulatedActiveSeconds: TimeInterval = 0
     private var lastAcceptedLocationDate: Date?
+    private var hasLiveHealthKitDistance = false
     private var timer: Timer?
     private var distanceUnit: DistanceUnit = .miles
+    private var splitAnnouncementUnit: DistanceUnit = .miles
+    private var activeSplitAnnouncementUnit: DistanceUnit?
+    private var splitAnnouncementTracker = DistanceSplitAnnouncementTracker()
     private var paceMode: PaceMode = .rolling
     private var rollingPaceSeconds = 30
     private var lastPaceRefreshElapsedSeconds: TimeInterval?
     private var lastIntervalCueID: String?
-    private let completionNotifier = WatchWorkoutCompletionNotifier()
+    private let announcementSpeaker = WorkoutAnnouncementSpeaker()
+    private let completionOutbox = WatchWorkoutCompletionOutbox()
 
     override init() {
         super.init()
@@ -65,6 +80,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             paceMode != settings.paceMode ||
             rollingPaceSeconds != settings.rollingPaceSeconds
         distanceUnit = settings.distanceUnit
+        splitAnnouncementUnit = settings.splitAnnouncementUnit
         paceMode = settings.paceMode
         rollingPaceSeconds = settings.rollingPaceSeconds
         if paceConfigurationChanged {
@@ -79,6 +95,12 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
 
     func clearStartStatus() {
         startStatus = nil
+    }
+
+    func dismissCompletedWorkoutSummary() {
+        completedWorkoutSummary = nil
+        activity = nil
+        snapshot = .empty
     }
 
     func togglePause() {
@@ -108,7 +130,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     }
 
     private func beginStart(activity: WorkoutActivity, interval: IntervalWorkout?) {
-        guard !isStarting, !isActive else { return }
+        guard !isStarting, !isActive, completedWorkoutSummary == nil else { return }
         self.activity = activity
         self.currentInterval = interval
         self.lastIntervalCueID = nil
@@ -162,8 +184,11 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             activeSegmentStartDate = start
             accumulatedActiveSeconds = 0
             lastAcceptedLocationDate = nil
+            hasLiveHealthKitDistance = false
             lastPaceRefreshElapsedSeconds = nil
             lastIntervalCueID = initialIntervalCueID()
+            activeSplitAnnouncementUnit = splitAnnouncementUnit
+            splitAnnouncementTracker.reset()
             snapshot = .empty
             isActive = true
             isStarting = false
@@ -397,8 +422,27 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         if let type = HKQuantityType.quantityType(forIdentifier: distanceIdentifier),
            let statistics = builder.statistics(for: type),
            let quantity = statistics.sumQuantity() {
+            hasLiveHealthKitDistance = true
             snapshot.distanceMeters = quantity.doubleValue(for: .meter())
         }
+        updateDistanceAnnouncements()
+    }
+
+    private func updateDistanceAnnouncements() {
+        guard isActive,
+              !isPaused,
+              !isFinishing,
+              activity?.recordsDistance == true,
+              let unit = activeSplitAnnouncementUnit else {
+            return
+        }
+
+        let announcements = splitAnnouncementTracker.announcements(
+            distanceMeters: snapshot.distanceMeters,
+            elapsedSeconds: activeElapsed(at: Date()),
+            unit: unit
+        )
+        announcements.forEach { announcementSpeaker.speak($0.spokenText) }
     }
 
     private func finishWorkout() {
@@ -417,15 +461,12 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
                     return
                 }
 
-                let notifyAndReset = {
-                    self.completionNotifier.notifyWorkoutFinished(workout: workout, activity: endedActivity)
-                    DispatchQueue.main.async {
-                        self.resetSessionAfterFinish()
-                    }
+                let completeAndReset = {
+                    self.completeFinishedWorkout(workout, activity: endedActivity)
                 }
 
                 guard let routeBuilder = self.routeBuilder else {
-                    notifyAndReset()
+                    completeAndReset()
                     return
                 }
 
@@ -435,9 +476,34 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
                             self.startStatus = .warning("Route save failed; workout was saved.")
                         }
                     }
-                    notifyAndReset()
+                    completeAndReset()
                 }
             }
+        }
+    }
+
+    private func completeFinishedWorkout(_ workout: HKWorkout, activity: WorkoutActivity?) {
+        DispatchQueue.main.async {
+            let completion = WatchWorkoutCompletion(
+                workoutID: workout.uuid,
+                activity: activity,
+                endedAt: workout.endDate
+            )
+            self.completionOutbox.enqueue(completion)
+            if WCSession.isSupported() {
+                self.completionOutbox.flush(on: WCSession.default)
+            }
+
+            let summary = WatchWorkoutCompletionSummary(
+                id: workout.uuid,
+                activity: activity,
+                elapsedSeconds: self.snapshot.elapsedSeconds,
+                distanceMeters: self.snapshot.distanceMeters,
+                activeEnergyKilocalories: self.snapshot.activeEnergyKilocalories
+            )
+            self.resetSessionAfterFinish()
+            self.completedWorkoutSummary = summary
+            WKInterfaceDevice.current().play(.success)
         }
     }
 
@@ -450,8 +516,11 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         activeSegmentStartDate = nil
         accumulatedActiveSeconds = 0
         lastAcceptedLocationDate = nil
+        hasLiveHealthKitDistance = false
         lastPaceRefreshElapsedSeconds = nil
         lastIntervalCueID = nil
+        activeSplitAnnouncementUnit = nil
+        splitAnnouncementTracker.reset()
         session = nil
         builder = nil
         routeBuilder = nil
@@ -459,24 +528,46 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     }
 }
 
-private final class WatchWorkoutCompletionNotifier {
-    func notifyWorkoutFinished(workout: HKWorkout, activity: WorkoutActivity?) {
-        guard WCSession.isSupported() else { return }
-        let session = WCSession.default
-        let payload: [String: Any] = [
-            WatchConnectivityPayloadKey.workoutFinished: true,
-            WatchConnectivityPayloadKey.workoutID: workout.uuid.uuidString,
-            WatchConnectivityPayloadKey.activity: activity?.rawValue ?? "",
-            WatchConnectivityPayloadKey.endedAt: workout.endDate
-        ]
+private final class WorkoutAnnouncementSpeaker: NSObject, AVSpeechSynthesizerDelegate, @unchecked Sendable {
+    private let synthesizer = AVSpeechSynthesizer()
+    private let audioSession = AVAudioSession.sharedInstance()
+    private var pendingUtteranceCount = 0
 
-        if session.activationState == .activated, session.isReachable {
-            session.sendMessage(payload, replyHandler: nil) { _ in
-                session.transferUserInfo(payload)
-            }
-        } else if session.activationState == .activated {
-            session.transferUserInfo(payload)
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    func speak(_ text: String) {
+        do {
+            try audioSession.setCategory(.playback, mode: .voicePrompt, options: [])
+            try audioSession.setActive(true)
+        } catch {
+            return
         }
+
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        pendingUtteranceCount += 1
+        synthesizer.speak(utterance)
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async {
+            self.finishUtterance()
+        }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async {
+            self.finishUtterance()
+        }
+    }
+
+    private func finishUtterance() {
+        pendingUtteranceCount = max(0, pendingUtteranceCount - 1)
+        guard pendingUtteranceCount == 0 else { return }
+        try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 
@@ -545,12 +636,13 @@ extension WorkoutSessionManager: CLLocationManagerDelegate {
             }
             self.lastAcceptedLocationDate = accepted.last?.timestamp
             self.snapshot.route.append(contentsOf: points)
-            if self.snapshot.distanceMeters == 0 {
+            if !self.hasLiveHealthKitDistance {
                 self.snapshot.distanceMeters = PaceCalculator.totalDistanceMeters(points: self.snapshot.route)
             }
             if let course = accepted.last?.course, course >= 0 {
                 self.snapshot.headingDegrees = course
             }
+            self.updateDistanceAnnouncements()
         }
     }
 

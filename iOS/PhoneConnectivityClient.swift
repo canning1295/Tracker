@@ -13,10 +13,11 @@ struct WatchConnectivityReadiness {
 }
 
 final class PhoneConnectivityClient: NSObject, WCSessionDelegate {
-    var onWorkoutFinished: ((Date?) -> Void)?
+    var onWorkoutFinished: ((WatchWorkoutCompletion) -> Void)?
     var onSettingsReceived: ((WorkoutSettings) -> Void)?
     private var pendingApplicationContext: [String: Any]?
     private var pendingUserInfoTransfers: [[String: Any]] = []
+    private var receivedWorkoutCompletionIDs = Set<UUID>()
 
     private var session: WCSession? {
         WCSession.isSupported() ? .default : nil
@@ -113,10 +114,10 @@ final class PhoneConnectivityClient: NSObject, WCSessionDelegate {
     }
 
     private func receiveWorkoutFinishedPayload(_ payload: [String: Any]) {
-        guard payload[WatchConnectivityPayloadKey.workoutFinished] as? Bool == true else { return }
-        let endedAt = payload[WatchConnectivityPayloadKey.endedAt] as? Date
+        guard let completion = WatchWorkoutCompletion(payload: payload) else { return }
         DispatchQueue.main.async {
-            self.onWorkoutFinished?(endedAt)
+            guard self.receivedWorkoutCompletionIDs.insert(completion.id).inserted else { return }
+            self.onWorkoutFinished?(completion)
         }
     }
 

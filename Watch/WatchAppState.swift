@@ -1,12 +1,61 @@
 import Foundation
 import WatchConnectivity
 
+final class WatchWorkoutCompletionOutbox {
+    private let defaults: UserDefaults
+    private let storageKey = "pendingWatchWorkoutCompletions"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func enqueue(_ completion: WatchWorkoutCompletion) {
+        var pending = load()
+        guard !pending.contains(where: { $0.id == completion.id }) else { return }
+        pending.append(completion)
+        save(pending)
+    }
+
+    func flush(on session: WCSession) {
+        guard session.activationState == .activated else {
+            session.activate()
+            return
+        }
+
+        let pending = load()
+        guard !pending.isEmpty else { return }
+
+        for completion in pending {
+            let payload = completion.payload
+            if session.isReachable {
+                session.sendMessage(payload, replyHandler: nil, errorHandler: nil)
+            }
+            session.transferUserInfo(payload)
+        }
+        save([])
+    }
+
+    private func load() -> [WatchWorkoutCompletion] {
+        guard let data = defaults.data(forKey: storageKey) else { return [] }
+        return (try? JSONDecoder().decode([WatchWorkoutCompletion].self, from: data)) ?? []
+    }
+
+    private func save(_ completions: [WatchWorkoutCompletion]) {
+        if completions.isEmpty {
+            defaults.removeObject(forKey: storageKey)
+        } else if let data = try? JSONEncoder().encode(completions) {
+            defaults.set(data, forKey: storageKey)
+        }
+    }
+}
+
 final class WatchAppState: NSObject, ObservableObject, WCSessionDelegate {
     @Published var settings: WorkoutSettings
     @Published var intervals: [IntervalWorkout]
     @Published var requestedStartActivity: WorkoutActivity?
 
     private let store = SettingsStore()
+    private let completionOutbox = WatchWorkoutCompletionOutbox()
     private var settingsObserver: NSObjectProtocol?
 
     override init() {
@@ -40,9 +89,34 @@ final class WatchAppState: NSObject, ObservableObject, WCSessionDelegate {
         guard WCSession.isSupported() else { return }
         WCSession.default.delegate = self
         WCSession.default.activate()
+        if WCSession.default.activationState == .activated {
+            completionOutbox.flush(on: WCSession.default)
+        }
     }
 
-    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {}
+    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        guard activationState == .activated else { return }
+        DispatchQueue.main.async {
+            self.completionOutbox.flush(on: session)
+        }
+    }
+
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        guard session.isReachable else { return }
+        DispatchQueue.main.async {
+            self.completionOutbox.flush(on: session)
+        }
+    }
+
+    func session(_ session: WCSession, didFinish userInfoTransfer: WCSessionUserInfoTransfer, error: Error?) {
+        guard error != nil,
+              let completion = WatchWorkoutCompletion(payload: userInfoTransfer.userInfo) else {
+            return
+        }
+        DispatchQueue.main.async {
+            self.completionOutbox.enqueue(completion)
+        }
+    }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         DispatchQueue.main.async {

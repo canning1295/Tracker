@@ -118,6 +118,7 @@ final class AppState {
     private var healthRefreshGeneration = 0
     private var healthDetailLoadTask: Task<Void, Never>?
     private var healthDetailLoadingIDs = Set<UUID>()
+    private var watchWorkoutRefreshTasks: [UUID: Task<Void, Never>] = [:]
     private var deletedWorkoutIDs: Set<UUID> = [] {
         didSet {
             settingsStore.saveDeletedWorkoutIDs(deletedWorkoutIDs)
@@ -134,9 +135,9 @@ final class AppState {
         self.stravaClientID = credentials.clientID
         self.stravaClientSecret = credentials.clientSecret
         self.stravaIsConnected = strava.hasStoredToken()
-        connectivity.onWorkoutFinished = { [weak self] _ in
+        connectivity.onWorkoutFinished = { [weak self] completion in
             Task { @MainActor in
-                await self?.handleWatchWorkoutFinished()
+                self?.handleWatchWorkoutFinished(completion)
             }
         }
         connectivity.onSettingsReceived = { [weak self] settings in
@@ -368,8 +369,25 @@ final class AppState {
         stravaConnectionMessage = "Strava disconnected."
     }
 
-    func handleWatchWorkoutFinished() async {
-        await refreshHealthData()
+    func handleWatchWorkoutFinished(_ completion: WatchWorkoutCompletion) {
+        guard watchWorkoutRefreshTasks[completion.workoutID] == nil else { return }
+
+        watchWorkoutRefreshTasks[completion.workoutID] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.watchWorkoutRefreshTasks[completion.workoutID] = nil }
+
+            await self.refreshHealthData()
+            for retryDelay in [2, 5, 10] {
+                guard !self.workouts.contains(where: { $0.id == completion.workoutID }) else { return }
+                do {
+                    try await Task.sleep(for: .seconds(retryDelay))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                await self.refreshHealthData()
+            }
+        }
     }
 
     private func enqueueAutoUploadsIfNeeded() {

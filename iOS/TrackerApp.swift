@@ -24,6 +24,11 @@ private struct AppStartupView: View {
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
                 appState?.consumePendingIntentStart()
+                if let appState {
+                    Task {
+                        await appState.refreshHealthData()
+                    }
+                }
             }
             .onOpenURL { url in
                 guard let appState else {
