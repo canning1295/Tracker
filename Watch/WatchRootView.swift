@@ -218,7 +218,8 @@ struct ActivitySelectionView: View {
             screenCount: 3,
             onSelect: onSelect,
             onBack: onBack,
-            topPadding: 0
+            topPadding: 0,
+            showsHeaderBackButton: true
         ) { activity, isSelected in
             CrownMenuRow(title: activity.displayName, systemImage: activity.symbolName, isSelected: isSelected)
         }

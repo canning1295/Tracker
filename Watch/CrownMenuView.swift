@@ -12,6 +12,7 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
     var fillRows = false
     var showsPageDots = false
     var topPadding: CGFloat = 4
+    var showsHeaderBackButton = false
     @ViewBuilder let rowContent: (Option, Bool) -> RowContent
 
     @FocusState private var focused: Bool
@@ -19,10 +20,30 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            Text(title)
-                .font(.headline)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            HStack(spacing: 4) {
+                if showsHeaderBackButton, let onBack {
+                    Button(action: onBack) {
+                        Image(systemName: "chevron.left")
+                            .font(.headline.weight(.semibold))
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Back")
+                }
+
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+
+                if showsHeaderBackButton, onBack != nil {
+                    Color.clear
+                        .frame(width: 28, height: 28)
+                        .accessibilityHidden(true)
+                }
+            }
 
             if options.isEmpty {
                 Spacer(minLength: 0)
