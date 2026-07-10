@@ -59,11 +59,9 @@ struct WatchWorkoutSummaryView: View {
 
     var body: some View {
         VStack(spacing: 7) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.title2)
-                .foregroundStyle(.green)
+            statusSymbol
 
-            Text("Workout Saved")
+            Text(statusTitle)
                 .font(.headline)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -71,6 +69,15 @@ struct WatchWorkoutSummaryView: View {
             Text(summary.activity?.displayName ?? "Workout")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if case .failed(let message) = summary.saveState {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+            }
 
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 8) {
@@ -95,6 +102,7 @@ struct WatchWorkoutSummaryView: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
+            .disabled(summary.saveState == .saving)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -109,6 +117,31 @@ struct WatchWorkoutSummaryView: View {
             elapsedSeconds: summary.elapsedSeconds,
             unit: settings.distanceUnit
         )
+    }
+
+    @ViewBuilder
+    private var statusSymbol: some View {
+        switch summary.saveState {
+        case .saving:
+            ProgressView()
+                .controlSize(.small)
+        case .saved:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.title2)
+                .foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.title2)
+                .foregroundStyle(.red)
+        }
+    }
+
+    private var statusTitle: String {
+        switch summary.saveState {
+        case .saving: return "Saving Workout"
+        case .saved: return "Workout Saved"
+        case .failed: return "Save Failed"
+        }
     }
 }
 

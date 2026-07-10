@@ -30,6 +30,15 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(model.action(forCrownValue: -3, currentSelectionIndex: 2), .forward(2))
     }
 
+    func testCrownMenuCanReachEveryIndoorWorkout() {
+        let model = CrownMenuScrollModel(optionCount: 5, hasBack: true, hasForward: false)
+
+        XCTAssertEqual(model.crownLowerBound, -4)
+        XCTAssertEqual(model.crownUpperBound, 1)
+        XCTAssertEqual(model.action(forCrownValue: -4, currentSelectionIndex: 3), .select(4))
+        XCTAssertEqual(model.action(forCrownValue: -3, currentSelectionIndex: 4), .select(3))
+    }
+
     func testWorkoutControlPresentationForRunningPausedAndSavingStates() {
         let running = WorkoutControlPresentation(isPaused: false, isFinishing: false)
         XCTAssertNil(running.statusText)

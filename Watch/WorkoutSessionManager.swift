@@ -24,11 +24,18 @@ enum WorkoutStartStatus: Equatable {
 }
 
 struct WatchWorkoutCompletionSummary: Identifiable, Equatable {
+    enum SaveState: Equatable {
+        case saving
+        case saved
+        case failed(String)
+    }
+
     var id: UUID
     var activity: WorkoutActivity?
     var elapsedSeconds: TimeInterval
     var distanceMeters: Double
     var activeEnergyKilocalories: Double
+    var saveState: SaveState
 }
 
 final class WorkoutSessionManager: NSObject, ObservableObject {
@@ -98,6 +105,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     }
 
     func dismissCompletedWorkoutSummary() {
+        guard completedWorkoutSummary?.saveState != .saving else { return }
         completedWorkoutSummary = nil
         activity = nil
         snapshot = .empty
@@ -118,12 +126,13 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         guard isActive, !isFinishing else { return }
         isFinishing = true
         snapshot.elapsedSeconds = activeElapsed(at: Date())
+        presentCompletionSummaryIfNeeded(activity: activity)
         locationManager.stopUpdatingLocation()
         locationManager.stopUpdatingHeading()
         timer?.invalidate()
         timer = nil
         guard let session else {
-            resetSessionAfterFinish()
+            failFinishedWorkout("Workout session data was unavailable.")
             return
         }
         session.end()
@@ -447,17 +456,23 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
 
     private func finishWorkout() {
         let endedActivity = activity
-        builder?.endCollection(withEnd: Date()) { [weak self] _, _ in
-            self?.builder?.finishWorkout { workout, error in
-                guard let self else { return }
+        presentCompletionSummaryIfNeeded(activity: endedActivity)
 
+        guard let builder else {
+            failFinishedWorkout("Workout data was unavailable.")
+            return
+        }
+
+        builder.endCollection(withEnd: Date()) { [weak self] success, error in
+            guard let self else { return }
+            guard success else {
+                self.failFinishedWorkout(error?.localizedDescription ?? "HealthKit could not finish collecting the workout.")
+                return
+            }
+
+            builder.finishWorkout { workout, error in
                 guard let workout else {
-                    DispatchQueue.main.async {
-                        if let error {
-                            self.startStatus = .failure(error.localizedDescription)
-                        }
-                        self.resetSessionAfterFinish()
-                    }
+                    self.failFinishedWorkout(error?.localizedDescription ?? "HealthKit did not return a saved workout.")
                     return
                 }
 
@@ -494,16 +509,38 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
                 self.completionOutbox.flush(on: WCSession.default)
             }
 
-            let summary = WatchWorkoutCompletionSummary(
-                id: workout.uuid,
-                activity: activity,
-                elapsedSeconds: self.snapshot.elapsedSeconds,
-                distanceMeters: self.snapshot.distanceMeters,
-                activeEnergyKilocalories: self.snapshot.activeEnergyKilocalories
-            )
+            self.presentCompletionSummaryIfNeeded(activity: activity)
+            self.completedWorkoutSummary?.saveState = .saved
             self.resetSessionAfterFinish()
-            self.completedWorkoutSummary = summary
             WKInterfaceDevice.current().play(.success)
+        }
+    }
+
+    private func presentCompletionSummaryIfNeeded(activity: WorkoutActivity?) {
+        if completedWorkoutSummary == nil {
+            completedWorkoutSummary = WatchWorkoutCompletionSummary(
+                id: UUID(),
+                activity: activity,
+                elapsedSeconds: snapshot.elapsedSeconds,
+                distanceMeters: snapshot.distanceMeters,
+                activeEnergyKilocalories: snapshot.activeEnergyKilocalories,
+                saveState: .saving
+            )
+        } else {
+            completedWorkoutSummary?.activity = activity
+            completedWorkoutSummary?.elapsedSeconds = snapshot.elapsedSeconds
+            completedWorkoutSummary?.distanceMeters = snapshot.distanceMeters
+            completedWorkoutSummary?.activeEnergyKilocalories = snapshot.activeEnergyKilocalories
+        }
+    }
+
+    private func failFinishedWorkout(_ message: String) {
+        DispatchQueue.main.async {
+            guard self.completedWorkoutSummary?.saveState != .saved else { return }
+            self.presentCompletionSummaryIfNeeded(activity: self.activity)
+            self.completedWorkoutSummary?.saveState = .failed(message)
+            self.resetSessionAfterFinish()
+            WKInterfaceDevice.current().play(.failure)
         }
     }
 
@@ -583,6 +620,7 @@ extension WorkoutSessionManager: HKWorkoutSessionDelegate {
                 }
             case .ended:
                 self.snapshot.elapsedSeconds = self.activeElapsed(at: date)
+                self.presentCompletionSummaryIfNeeded(activity: self.activity)
                 self.finishWorkout()
             default:
                 break
@@ -592,6 +630,10 @@ extension WorkoutSessionManager: HKWorkoutSessionDelegate {
 
     func workoutSession(_ workoutSession: HKWorkoutSession, didFailWithError error: Error) {
         DispatchQueue.main.async {
+            if self.isFinishing || self.completedWorkoutSummary != nil {
+                self.failFinishedWorkout(error.localizedDescription)
+                return
+            }
             self.isStarting = false
             self.isFinishing = false
             self.isActive = false

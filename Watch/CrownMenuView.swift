@@ -29,21 +29,32 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 0)
-            } else {
+            } else if fillRows {
                 VStack(spacing: 5) {
                     ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
-                        Button {
-                            selectionIndex = index
-                            onSelect(option)
-                        } label: {
-                            rowContent(option, index == clampedSelectionIndex)
-                                .frame(maxHeight: fillRows ? .infinity : nil)
-                        }
-                        .buttonStyle(.plain)
-                        .frame(maxWidth: .infinity, maxHeight: fillRows ? .infinity : nil)
+                        optionButton(option, at: index)
+                            .frame(maxHeight: .infinity)
                     }
                 }
                 .frame(maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: options.count > 3) {
+                        LazyVStack(spacing: 5) {
+                            ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+                                optionButton(option, at: index)
+                                    .id(option.id)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: .infinity)
+                    .onAppear {
+                        scrollToSelection(using: proxy, animated: false)
+                    }
+                    .onChange(of: clampedSelectionIndex) { _, _ in
+                        scrollToSelection(using: proxy, animated: true)
+                    }
+                }
             }
 
             if showsPageDots {
@@ -77,6 +88,29 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
 
     private var clampedSelectionIndex: Int {
         scrollModel.clampedSelection(selectionIndex)
+    }
+
+    private func optionButton(_ option: Option, at index: Int) -> some View {
+        Button {
+            selectionIndex = index
+            onSelect(option)
+        } label: {
+            rowContent(option, index == clampedSelectionIndex)
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func scrollToSelection(using proxy: ScrollViewProxy, animated: Bool) {
+        guard options.indices.contains(clampedSelectionIndex) else { return }
+        let selectedID = options[clampedSelectionIndex].id
+        if animated {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                proxy.scrollTo(selectedID, anchor: .center)
+            }
+        } else {
+            proxy.scrollTo(selectedID, anchor: .center)
+        }
     }
 
     private var scrollModel: CrownMenuScrollModel {
