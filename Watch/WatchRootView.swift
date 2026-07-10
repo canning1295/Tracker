@@ -222,7 +222,9 @@ struct ActivitySelectionView: View {
         ) { activity, isSelected in
             CrownMenuRow(title: activity.displayName, systemImage: activity.symbolName, isSelected: isSelected)
         }
+        .toolbar(.hidden, for: .navigationBar)
         ._statusBarHidden(true)
+        .ignoresSafeArea(.container, edges: .top)
     }
 
     private var activities: [WorkoutActivity] {
