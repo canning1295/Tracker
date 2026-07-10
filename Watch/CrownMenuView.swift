@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 struct CrownMenu<Option: Identifiable, RowContent: View>: View {
@@ -17,12 +18,15 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
 
     @FocusState private var focused: Bool
     @State private var crownValue: Double = 0
+    @State private var isHandlingHeaderBack = false
 
     var body: some View {
         VStack(spacing: 6) {
             HStack(spacing: 4) {
                 if showsHeaderBackButton, let onBack {
-                    Button(action: onBack) {
+                    Button {
+                        handleHeaderBack(onBack)
+                    } label: {
                         Image(systemName: "chevron.left")
                             .font(.headline.weight(.semibold))
                             .frame(width: 28, height: 28)
@@ -44,6 +48,7 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
                         .accessibilityHidden(true)
                 }
             }
+            .zIndex(1)
 
             if options.isEmpty {
                 Spacer(minLength: 0)
@@ -115,13 +120,24 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
 
     private func optionButton(_ option: Option, at index: Int) -> some View {
         Button {
+            guard !isHandlingHeaderBack else { return }
             selectionIndex = index
             onSelect(option)
         } label: {
             rowContent(option, index == clampedSelectionIndex)
         }
         .buttonStyle(.plain)
+        .disabled(isHandlingHeaderBack)
         .frame(maxWidth: .infinity)
+    }
+
+    private func handleHeaderBack(_ onBack: @escaping () -> Void) {
+        guard !isHandlingHeaderBack else { return }
+        isHandlingHeaderBack = true
+        DispatchQueue.main.async {
+            onBack()
+            isHandlingHeaderBack = false
+        }
     }
 
     private func scrollToSelection(using proxy: ScrollViewProxy, animated: Bool) {
