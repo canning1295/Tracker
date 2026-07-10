@@ -1,5 +1,19 @@
 import SwiftUI
 
+private enum SummaryReport: String, CaseIterable, Identifiable, Hashable {
+    case overview
+    case records
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .overview: return "Overview"
+        case .records: return "Records"
+        }
+    }
+}
+
 private enum SummaryRangePreset: String, CaseIterable, Identifiable {
     case day
     case week
@@ -80,6 +94,7 @@ private enum SummaryActivityFilter: Hashable, Identifiable {
 }
 
 private struct SummaryRefreshKey: Hashable {
+    var report: SummaryReport
     var rangePreset: SummaryRangePreset
     var activityFilter: SummaryActivityFilter
     var intervalStart: Date
@@ -94,6 +109,8 @@ private struct SummaryComputationInput {
     var userMetrics: UserMetrics
     var interval: DateInterval
     var activityFilter: SummaryActivityFilter
+    var excludedBestEffortWorkoutIDs: Set<UUID>
+    var report: SummaryReport
 }
 
 private struct SummarySnapshot {
@@ -101,6 +118,7 @@ private struct SummarySnapshot {
     var summary: WeeklySummary
     var recentWeeks: [WeeklySummary]
     var vo2History: VO2MaxEstimator.HistorySummary?
+    var bestEfforts: [BestEffortDistance: BestEffortResult]
 
     init(input: SummaryComputationInput) {
         let editByWorkoutID = input.activityEdits.reduce(into: [UUID: ActivityEdit]()) { partial, edit in
@@ -113,6 +131,11 @@ private struct SummarySnapshot {
             )
         }
         let filteredWorkouts = adjustedWorkouts.filter { input.activityFilter.includes($0.activity) }
+        let recordWorkouts = adjustedWorkouts.filter {
+            $0.activity == .outdoorRun &&
+                $0.startDate >= input.interval.start &&
+                $0.startDate < input.interval.end
+        }
 
         interval = input.interval
         summary = SummaryEngine.summary(
@@ -130,11 +153,18 @@ private struct SummarySnapshot {
             userMetrics: input.userMetrics,
             settings: input.heartRateSettings
         )
+        bestEfforts = input.report == .records
+            ? BestEffortEngine.fastestEfforts(
+                workouts: recordWorkouts,
+                excluding: input.excludedBestEffortWorkoutIDs
+            )
+            : [:]
     }
 }
 
 struct SummaryView: View {
     @Environment(AppState.self) private var appState
+    @State private var report: SummaryReport = .overview
     @State private var rangePreset: SummaryRangePreset = .week
     @State private var activityFilter: SummaryActivityFilter = .all
     @State private var anchorDate = Date()
@@ -147,6 +177,16 @@ struct SummaryView: View {
         let refreshKey = summaryRefreshKey
 
         List {
+            Section {
+                Picker("Report", selection: $report) {
+                    ForEach(SummaryReport.allCases) { report in
+                        Text(report.displayName).tag(report)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+
             Section("Range") {
                 Picker("Period", selection: $rangePreset) {
                     ForEach(SummaryRangePreset.allCases) { preset in
@@ -155,12 +195,14 @@ struct SummaryView: View {
                 }
                 .pickerStyle(.menu)
 
-                Picker("Activity", selection: $activityFilter) {
-                    ForEach(SummaryActivityFilter.pickerOptions) { filter in
-                        Text(filter.displayName).tag(filter)
+                if report == .overview {
+                    Picker("Activity", selection: $activityFilter) {
+                        ForEach(SummaryActivityFilter.pickerOptions) { filter in
+                            Text(filter.displayName).tag(filter)
+                        }
                     }
+                    .pickerStyle(.menu)
                 }
-                .pickerStyle(.menu)
 
                 if rangePreset == .custom {
                     DatePicker(selection: $customStart, displayedComponents: .date) {
@@ -177,7 +219,11 @@ struct SummaryView: View {
             }
 
             if let summarySnapshot {
-                summarySections(for: summarySnapshot)
+                if report == .overview {
+                    summarySections(for: summarySnapshot)
+                } else {
+                    bestEffortSections(for: summarySnapshot)
+                }
             } else {
                 Section {
                     HStack {
@@ -193,13 +239,47 @@ struct SummaryView: View {
         .navigationTitle("Summary")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if isLoadingSummary, summarySnapshot != nil {
+                if (isLoadingSummary && summarySnapshot != nil) || (report == .records && isLoadingBestEffortRoutes) {
                     ThinkingIndicator()
                 }
             }
         }
         .task(id: refreshKey) {
             await refreshSummary(for: refreshKey)
+        }
+    }
+
+    @ViewBuilder
+    private func bestEffortSections(for snapshot: SummarySnapshot) -> some View {
+        Section {
+            ForEach(BestEffortDistance.allCases) { distance in
+                if let result = snapshot.bestEfforts[distance],
+                   let workout = appState.latestWorkout(for: result.workoutID) {
+                    NavigationLink {
+                        ActivityDetailView(workout: workout, reviewedBestEffort: result)
+                    } label: {
+                        BestEffortRow(distance: distance, result: result)
+                    }
+                } else {
+                    BestEffortRow(distance: distance, result: nil)
+                }
+            }
+
+            if isLoadingBestEffortRoutes {
+                HStack {
+                    Spacer()
+                    ThinkingIndicator()
+                    Spacer()
+                }
+                .padding(.vertical, 4)
+                .accessibilityLabel("Loading Run Routes")
+            }
+        } header: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Running Best Efforts")
+                Text(summaryHeader(for: snapshot.interval))
+                    .font(.caption2)
+            }
         }
     }
 
@@ -322,6 +402,7 @@ struct SummaryView: View {
     private var summaryRefreshKey: SummaryRefreshKey {
         let interval = selectedInterval
         return SummaryRefreshKey(
+            report: report,
             rangePreset: rangePreset,
             activityFilter: activityFilter,
             intervalStart: interval.start,
@@ -345,7 +426,9 @@ struct SummaryView: View {
             heartRateSettings: appState.settings.heartRate,
             userMetrics: appState.settings.userMetrics,
             interval: DateInterval(start: key.intervalStart, end: key.intervalEnd),
-            activityFilter: key.activityFilter
+            activityFilter: key.activityFilter,
+            excludedBestEffortWorkoutIDs: appState.excludedBestEffortWorkoutIDs,
+            report: key.report
         )
 
         let snapshot = await Task.detached(priority: .userInitiated) {
@@ -378,6 +461,15 @@ struct SummaryView: View {
         }
     }
 
+    private var isLoadingBestEffortRoutes: Bool {
+        appState.workouts.contains { workout in
+            workout.activity == .outdoorRun &&
+                workout.startDate >= selectedInterval.start &&
+                workout.startDate < selectedInterval.end &&
+                appState.isLoadingDetails(for: workout.id)
+        }
+    }
+
     private func summaryHeader(for interval: DateInterval) -> String {
         let dateRange = formattedDateRange(for: interval)
         switch rangePreset {
@@ -406,6 +498,30 @@ struct SummaryView: View {
         guard let value else { return "--" }
         let sign = value >= 0 ? "+" : ""
         return "\(sign)\(String(format: "%.1f", value))"
+    }
+}
+
+private struct BestEffortRow: View {
+    let distance: BestEffortDistance
+    let result: BestEffortResult?
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(distance.displayName)
+                    .font(.headline)
+                if let result {
+                    Text(result.workoutStartDate, format: .dateTime.month(.abbreviated).day().year())
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Text(result.map { WorkoutFormatter.bestEffortDuration($0.duration) } ?? "--")
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(result == nil ? .secondary : .primary)
+        }
+        .padding(.vertical, 2)
     }
 }
 

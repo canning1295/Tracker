@@ -102,6 +102,48 @@ enum DistanceUnit: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum BestEffortDistance: String, CaseIterable, Identifiable, Hashable {
+    case meters100
+    case meters200
+    case meters400
+    case kilometer
+    case mile
+    case fiveKilometers
+    case tenKilometers
+    case halfMarathon
+    case marathon
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .meters100: return "100 m"
+        case .meters200: return "200 m"
+        case .meters400: return "400 m"
+        case .kilometer: return "1 km"
+        case .mile: return "1 mile"
+        case .fiveKilometers: return "5K"
+        case .tenKilometers: return "10K"
+        case .halfMarathon: return "Half Marathon"
+        case .marathon: return "Marathon"
+        }
+    }
+
+    var meters: Double {
+        switch self {
+        case .meters100: return 100
+        case .meters200: return 200
+        case .meters400: return 400
+        case .kilometer: return 1_000
+        case .mile: return DistanceUnit.miles.metersPerUnit
+        case .fiveKilometers: return 5_000
+        case .tenKilometers: return 10_000
+        case .halfMarathon: return 21_097.5
+        case .marathon: return 42_195
+        }
+    }
+}
+
 enum WorkoutAnnouncementUnit: String, Codable, CaseIterable, Identifiable {
     case off
     case miles
@@ -648,6 +690,16 @@ struct RoutePoint: Codable, Hashable {
     var altitudeMeters: Double?
     var timestamp: Date
     var horizontalAccuracy: Double?
+}
+
+struct BestEffortResult: Identifiable, Hashable {
+    var id: BestEffortDistance { distance }
+    var distance: BestEffortDistance
+    var workoutID: UUID
+    var workoutStartDate: Date
+    var duration: TimeInterval
+    var segmentStart: Date
+    var segmentEnd: Date
 }
 
 struct HeartRateSample: Codable, Hashable, Identifiable {

@@ -144,6 +144,71 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(WorkoutFormatter.distance(5_000, unit: .kilometers), "5.00 km")
     }
 
+    func testBestEffortEngineFindsFastestRollingRunSegments() throws {
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(240),
+            duration: 240,
+            distanceMeters: 500,
+            activeEnergyKilocalories: 80,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: 100, seconds: 60, start: start),
+                routePoint(distanceMeters: 200, seconds: 120, start: start),
+                routePoint(distanceMeters: 300, seconds: 150, start: start),
+                routePoint(distanceMeters: 400, seconds: 180, start: start),
+                routePoint(distanceMeters: 500, seconds: 240, start: start)
+            ]
+        )
+
+        let efforts = BestEffortEngine.fastestEfforts(workouts: [workout])
+
+        XCTAssertEqual(try XCTUnwrap(efforts[.meters100]).duration, 30, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(efforts[.meters200]).duration, 60, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(efforts[.meters400]).duration, 180, accuracy: 0.001)
+        XCTAssertNil(efforts[.kilometer])
+        XCTAssertEqual(WorkoutFormatter.bestEffortDuration(73.24), "1:13.2")
+    }
+
+    func testBestEffortEngineSkipsExcludedWorkouts() {
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let excludedWorkout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(60),
+            duration: 60,
+            distanceMeters: 100,
+            activeEnergyKilocalories: 20,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: 100, seconds: 60, start: start)
+            ]
+        )
+        let replacementStart = start.addingTimeInterval(86_400)
+        let replacementWorkout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: replacementStart,
+            endDate: replacementStart.addingTimeInterval(90),
+            duration: 90,
+            distanceMeters: 100,
+            activeEnergyKilocalories: 20,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: replacementStart),
+                routePoint(distanceMeters: 100, seconds: 90, start: replacementStart)
+            ]
+        )
+
+        let efforts = BestEffortEngine.fastestEfforts(
+            workouts: [excludedWorkout, replacementWorkout],
+            excluding: [excludedWorkout.id]
+        )
+
+        XCTAssertEqual(efforts[.meters100]?.workoutID, replacementWorkout.id)
+        XCTAssertEqual(efforts[.meters100]?.duration, 90)
+    }
+
     func testRollingPaceRefreshCadenceUsesConfiguredWindow() {
         XCTAssertTrue(PaceCalculator.shouldRefreshDisplayedPace(
             elapsedSeconds: 1,
@@ -231,6 +296,21 @@ final class WorkoutCoreTests: XCTestCase {
         let deletedIDs: Set<UUID> = [UUID(), UUID()]
         store.saveDeletedWorkoutIDs(deletedIDs)
         XCTAssertEqual(store.loadDeletedWorkoutIDs(), deletedIDs)
+    }
+
+    func testSettingsStoreRoundTripsBestEffortExclusions() throws {
+        let suiteName = "TrackerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = SettingsStore(defaults: defaults)
+        XCTAssertEqual(store.loadExcludedBestEffortWorkoutIDs(), [])
+
+        let excludedIDs: Set<UUID> = [UUID(), UUID()]
+        store.saveExcludedBestEffortWorkoutIDs(excludedIDs)
+        XCTAssertEqual(store.loadExcludedBestEffortWorkoutIDs(), excludedIDs)
     }
 
     func testWorkoutSettingsDecodeOldPayloadWithNewDefaults() throws {

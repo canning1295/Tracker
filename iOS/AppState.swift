@@ -43,6 +43,12 @@ final class AppState {
             settingsStore.saveActivityEdits(activityEdits)
         }
     }
+    private(set) var excludedBestEffortWorkoutIDs: Set<UUID> {
+        didSet {
+            summaryRevision += 1
+            settingsStore.saveExcludedBestEffortWorkoutIDs(excludedBestEffortWorkoutIDs)
+        }
+    }
     var stravaUploads: [StravaUploadRecord] {
         didSet {
             settingsStore.saveStravaUploads(stravaUploads)
@@ -129,6 +135,7 @@ final class AppState {
         self.settings = settingsStore.loadSettings()
         self.intervals = settingsStore.loadIntervals()
         self.activityEdits = settingsStore.loadActivityEdits()
+        self.excludedBestEffortWorkoutIDs = settingsStore.loadExcludedBestEffortWorkoutIDs()
         self.stravaUploads = settingsStore.loadStravaUploads()
         self.deletedWorkoutIDs = settingsStore.loadDeletedWorkoutIDs()
         let credentials = strava.storedCredentials()
@@ -272,11 +279,27 @@ final class AppState {
         refreshStravaQueueAfterLocalEdit(for: workout)
     }
 
+    func isIncludedInBestEfforts(_ workoutID: UUID) -> Bool {
+        !excludedBestEffortWorkoutIDs.contains(workoutID)
+    }
+
+    func setBestEffortInclusion(_ included: Bool, for workoutID: UUID) {
+        var updated = excludedBestEffortWorkoutIDs
+        if included {
+            updated.remove(workoutID)
+        } else {
+            updated.insert(workoutID)
+        }
+        guard updated != excludedBestEffortWorkoutIDs else { return }
+        excludedBestEffortWorkoutIDs = updated
+    }
+
     func deleteWorkout(_ workout: WorkoutSummary) async -> Bool {
         deletedWorkoutIDs.insert(workout.id)
         healthDetailLoadingIDs.remove(workout.id)
         workouts.removeAll { $0.id == workout.id }
         activityEdits.removeAll { $0.workoutID == workout.id }
+        setBestEffortInclusion(true, for: workout.id)
         stravaUploads.removeAll { $0.workoutID == workout.id }
 
         guard workout.source == .healthKit else {

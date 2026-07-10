@@ -6,6 +6,7 @@ struct ActivityDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let workout: WorkoutSummary
     let onDelete: (UUID) -> Void
+    let reviewedBestEffort: BestEffortResult?
     @State private var isConfirmingDelete = false
     @State private var isDeleting = false
     @State private var deleteError: String?
@@ -24,6 +25,27 @@ struct ActivityDetailView: View {
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
+            if currentWorkout.activity == .outdoorRun {
+                Section("Fastest Reports") {
+                    if let reviewedBestEffort {
+                        LabeledContent(reviewedBestEffort.distance.displayName) {
+                            Text(WorkoutFormatter.bestEffortDuration(reviewedBestEffort.duration))
+                                .monospacedDigit()
+                        }
+                        LabeledContent("Segment") {
+                            Text(segmentTimeRange(reviewedBestEffort))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Toggle("Include This Activity", isOn: Binding(
+                        get: { appState.isIncludedInBestEfforts(currentWorkout.id) },
+                        set: { appState.setBestEffortInclusion($0, for: currentWorkout.id) }
+                    ))
+                }
+            }
+
             if edit.hasAdjustments {
                 Section("App Edits") {
                     LabeledContent("Trimmed") {
@@ -40,7 +62,10 @@ struct ActivityDetailView: View {
 
             if !displayWorkout.route.isEmpty {
                 Section("Route") {
-                    RouteMapView(route: displayWorkout.route)
+                    RouteMapView(
+                        route: displayWorkout.route,
+                        highlightedRange: reviewedBestEffort.map { $0.segmentStart...$0.segmentEnd }
+                    )
                         .frame(height: 240)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -173,8 +198,13 @@ struct ActivityDetailView: View {
         }
     }
 
-    init(workout: WorkoutSummary, onDelete: @escaping (UUID) -> Void = { _ in }) {
+    init(
+        workout: WorkoutSummary,
+        reviewedBestEffort: BestEffortResult? = nil,
+        onDelete: @escaping (UUID) -> Void = { _ in }
+    ) {
         self.workout = workout
+        self.reviewedBestEffort = reviewedBestEffort
         self.onDelete = onDelete
     }
 
@@ -224,6 +254,12 @@ struct ActivityDetailView: View {
             return "--"
         }
         return String(format: "%.1f", estimate)
+    }
+
+    private func segmentTimeRange(_ effort: BestEffortResult) -> String {
+        let start = effort.segmentStart.formatted(.dateTime.hour().minute().second())
+        let end = effort.segmentEnd.formatted(.dateTime.hour().minute().second())
+        return "\(start) - \(end)"
     }
 
     private func stravaActionTitle(for status: StravaUploadStatus) -> String {
@@ -289,12 +325,23 @@ private struct MetricTile: View {
 
 private struct RouteMapView: View {
     let route: [RoutePoint]
+    var highlightedRange: ClosedRange<Date>?
 
     var body: some View {
         Map {
             if route.count > 1 {
-                MapPolyline(coordinates: route.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) })
-                    .stroke(.orange, lineWidth: 4)
+                if highlightedRange == nil {
+                    MapPolyline(coordinates: coordinates(for: route))
+                        .stroke(.orange, lineWidth: 4)
+                } else {
+                    MapPolyline(coordinates: coordinates(for: route))
+                        .stroke(.secondary.opacity(0.55), lineWidth: 3)
+
+                    if highlightedRoute.count > 1 {
+                        MapPolyline(coordinates: coordinates(for: highlightedRoute))
+                            .stroke(.orange, lineWidth: 6)
+                    }
+                }
             }
             if let last = route.last {
                 Annotation("Current", coordinate: CLLocationCoordinate2D(latitude: last.latitude, longitude: last.longitude)) {
@@ -306,6 +353,25 @@ private struct RouteMapView: View {
         .mapControls {
             MapScaleView()
         }
+    }
+
+    private var highlightedRoute: [RoutePoint] {
+        guard let highlightedRange else { return [] }
+        let sorted = route.sorted { $0.timestamp < $1.timestamp }
+        let includedIndices = sorted.indices.filter { highlightedRange.contains(sorted[$0].timestamp) }
+        let first = includedIndices.first
+            ?? sorted.firstIndex { $0.timestamp >= highlightedRange.lowerBound }
+            ?? sorted.index(before: sorted.endIndex)
+        let last = includedIndices.last
+            ?? sorted.lastIndex { $0.timestamp <= highlightedRange.upperBound }
+            ?? sorted.startIndex
+        let lower = max(sorted.startIndex, min(first, last) - 1)
+        let upper = min(sorted.index(before: sorted.endIndex), max(first, last) + 1)
+        return Array(sorted[lower...upper])
+    }
+
+    private func coordinates(for points: [RoutePoint]) -> [CLLocationCoordinate2D] {
+        points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
     }
 }
 

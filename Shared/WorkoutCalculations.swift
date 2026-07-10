@@ -332,6 +332,21 @@ enum WorkoutFormatter {
     static func activeCalories(_ value: Double) -> String {
         "\(Int(WorkoutCalories.activeKilocalories(fromHealthKitActiveKilocalories: value).rounded())) cal"
     }
+
+    static func bestEffortDuration(_ value: TimeInterval) -> String {
+        guard value.isFinite, value >= 0 else { return "--" }
+        let totalTenths = Int((value * 10).rounded())
+        let totalSeconds = totalTenths / 10
+        let tenths = totalTenths % 10
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d.%d", hours, minutes, seconds, tenths)
+        }
+        return String(format: "%d:%02d.%d", minutes, seconds, tenths)
+    }
 }
 
 struct DistanceSplitAnnouncement: Equatable {
@@ -501,6 +516,181 @@ enum SplitBuilder {
     private static func interpolatedAltitude(from start: RoutePoint, to end: RoutePoint, progress: Double) -> Double? {
         guard let startAltitude = start.altitudeMeters, let endAltitude = end.altitudeMeters else { return nil }
         return startAltitude + (endAltitude - startAltitude) * progress
+    }
+}
+
+enum BestEffortEngine {
+    private struct RouteSample {
+        var cumulativeDistanceMeters: Double
+        var timestamp: Date
+    }
+
+    private enum BoundaryPreference {
+        case earliest
+        case latest
+    }
+
+    static func fastestEfforts(
+        workouts: [WorkoutSummary],
+        excluding excludedWorkoutIDs: Set<UUID> = []
+    ) -> [BestEffortDistance: BestEffortResult] {
+        var fastest: [BestEffortDistance: BestEffortResult] = [:]
+
+        for workout in workouts where !excludedWorkoutIDs.contains(workout.id) {
+            guard let samples = routeSamples(for: workout.route) else { continue }
+
+            for distance in BestEffortDistance.allCases {
+                guard let segment = fastestSegment(samples: samples, distanceMeters: distance.meters) else { continue }
+                let result = BestEffortResult(
+                    distance: distance,
+                    workoutID: workout.id,
+                    workoutStartDate: workout.startDate,
+                    duration: segment.duration,
+                    segmentStart: segment.start,
+                    segmentEnd: segment.end
+                )
+                if result.duration < (fastest[distance]?.duration ?? .infinity) {
+                    fastest[distance] = result
+                }
+            }
+        }
+
+        return fastest
+    }
+
+    private static func routeSamples(for route: [RoutePoint]) -> [RouteSample]? {
+        let points = route
+            .filter { point in
+                guard let accuracy = point.horizontalAccuracy else { return true }
+                return accuracy >= 0 && accuracy <= 50
+            }
+            .sorted { $0.timestamp < $1.timestamp }
+        guard let first = points.first else { return nil }
+
+        var samples = [RouteSample(cumulativeDistanceMeters: 0, timestamp: first.timestamp)]
+        var previous = first
+        var cumulativeDistance = 0.0
+
+        for point in points.dropFirst() {
+            guard point.timestamp > previous.timestamp else { continue }
+            cumulativeDistance += PaceCalculator.distanceMeters(between: previous, and: point)
+            samples.append(RouteSample(
+                cumulativeDistanceMeters: cumulativeDistance,
+                timestamp: point.timestamp
+            ))
+            previous = point
+        }
+
+        guard samples.count > 1, cumulativeDistance > 0 else { return nil }
+        return samples
+    }
+
+    private static func fastestSegment(
+        samples: [RouteSample],
+        distanceMeters: Double
+    ) -> (start: Date, end: Date, duration: TimeInterval)? {
+        guard distanceMeters > 0,
+              let totalDistance = samples.last?.cumulativeDistanceMeters,
+              totalDistance >= distanceMeters else {
+            return nil
+        }
+
+        var best: (start: Date, end: Date, duration: TimeInterval)?
+
+        func consider(start: Date, end: Date) {
+            let duration = end.timeIntervalSince(start)
+            guard duration > 0, duration.isFinite else { return }
+            if duration < (best?.duration ?? .infinity) {
+                best = (start, end, duration)
+            }
+        }
+
+        for sample in samples {
+            let endDistance = sample.cumulativeDistanceMeters + distanceMeters
+            guard endDistance <= totalDistance else { break }
+            if let end = timestamp(
+                at: endDistance,
+                samples: samples,
+                preference: .earliest
+            ) {
+                consider(start: sample.timestamp, end: end)
+            }
+        }
+
+        for sample in samples {
+            let startDistance = sample.cumulativeDistanceMeters - distanceMeters
+            guard startDistance >= 0 else { continue }
+            if let start = timestamp(
+                at: startDistance,
+                samples: samples,
+                preference: .latest
+            ) {
+                consider(start: start, end: sample.timestamp)
+            }
+        }
+
+        return best
+    }
+
+    private static func timestamp(
+        at targetDistance: Double,
+        samples: [RouteSample],
+        preference: BoundaryPreference
+    ) -> Date? {
+        let epsilon = 0.000_001
+
+        switch preference {
+        case .earliest:
+            var lower = 0
+            var upper = samples.count
+            while lower < upper {
+                let middle = (lower + upper) / 2
+                if samples[middle].cumulativeDistanceMeters < targetDistance {
+                    lower = middle + 1
+                } else {
+                    upper = middle
+                }
+            }
+            guard lower < samples.count else { return nil }
+            if abs(samples[lower].cumulativeDistanceMeters - targetDistance) <= epsilon {
+                return samples[lower].timestamp
+            }
+            return interpolatedTimestamp(targetDistance: targetDistance, lowerIndex: lower - 1, upperIndex: lower, samples: samples)
+
+        case .latest:
+            var lower = 0
+            var upper = samples.count
+            while lower < upper {
+                let middle = (lower + upper) / 2
+                if samples[middle].cumulativeDistanceMeters <= targetDistance {
+                    lower = middle + 1
+                } else {
+                    upper = middle
+                }
+            }
+            let lowerIndex = lower - 1
+            guard lowerIndex >= 0 else { return nil }
+            if abs(samples[lowerIndex].cumulativeDistanceMeters - targetDistance) <= epsilon {
+                return samples[lowerIndex].timestamp
+            }
+            guard lower < samples.count else { return nil }
+            return interpolatedTimestamp(targetDistance: targetDistance, lowerIndex: lowerIndex, upperIndex: lower, samples: samples)
+        }
+    }
+
+    private static func interpolatedTimestamp(
+        targetDistance: Double,
+        lowerIndex: Int,
+        upperIndex: Int,
+        samples: [RouteSample]
+    ) -> Date? {
+        guard lowerIndex >= 0, upperIndex < samples.count else { return nil }
+        let lower = samples[lowerIndex]
+        let upper = samples[upperIndex]
+        let distanceDelta = upper.cumulativeDistanceMeters - lower.cumulativeDistanceMeters
+        guard distanceDelta > 0 else { return nil }
+        let progress = min(max((targetDistance - lower.cumulativeDistanceMeters) / distanceDelta, 0), 1)
+        return lower.timestamp.addingTimeInterval(upper.timestamp.timeIntervalSince(lower.timestamp) * progress)
     }
 }
 
