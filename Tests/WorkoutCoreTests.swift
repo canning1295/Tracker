@@ -218,6 +218,46 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(efforts[.meters100]?.duration, 90)
     }
 
+    func testBestEffortEngineRejectsGPSJumpsAndUsesPlausibleRoute() throws {
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(62),
+            duration: 62,
+            distanceMeters: 100,
+            activeEnergyKilocalories: 20,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: 1_000, seconds: 1, start: start),
+                routePoint(distanceMeters: 0, seconds: 2, start: start),
+                routePoint(distanceMeters: 100, seconds: 62, start: start)
+            ]
+        )
+
+        let efforts = BestEffortEngine.fastestEfforts(workouts: [workout])
+
+        XCTAssertEqual(try XCTUnwrap(efforts[.meters100]).duration, 60, accuracy: 0.001)
+    }
+
+    func testBestEffortEngineDoesNotCreateRecordsFromOnlyGPSJump() {
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1),
+            duration: 1,
+            distanceMeters: 1_000,
+            activeEnergyKilocalories: 1,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: 1_000, seconds: 1, start: start)
+            ]
+        )
+
+        XCTAssertTrue(BestEffortEngine.fastestEfforts(workouts: [workout]).isEmpty)
+    }
+
     func testBestEffortCacheKeepsAllTimeWinnerAndRevealsNextAfterExclusion() throws {
         let fastWorkoutID = UUID()
         let slowerWorkoutID = UUID()

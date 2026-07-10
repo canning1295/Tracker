@@ -520,6 +520,8 @@ enum SplitBuilder {
 }
 
 enum BestEffortEngine {
+    private static let maximumPlausibleRunningSpeedMetersPerSecond = 15.0
+
     private struct RouteSample {
         var cumulativeDistanceMeters: Double
         var timestamp: Date
@@ -573,7 +575,18 @@ enum BestEffortEngine {
 
         for point in points.dropFirst() {
             guard point.timestamp > previous.timestamp else { continue }
-            cumulativeDistance += PaceCalculator.distanceMeters(between: previous, and: point)
+            let elapsedSeconds = point.timestamp.timeIntervalSince(previous.timestamp)
+            let segmentDistance = PaceCalculator.distanceMeters(between: previous, and: point)
+            let speed = segmentDistance / elapsedSeconds
+            if speed > maximumPlausibleRunningSpeedMetersPerSecond {
+                samples.append(RouteSample(
+                    cumulativeDistanceMeters: cumulativeDistance,
+                    timestamp: point.timestamp
+                ))
+                previous = point
+                continue
+            }
+            cumulativeDistance += segmentDistance
             samples.append(RouteSample(
                 cumulativeDistanceMeters: cumulativeDistance,
                 timestamp: point.timestamp
@@ -599,7 +612,8 @@ enum BestEffortEngine {
 
         func consider(start: Date, end: Date) {
             let duration = end.timeIntervalSince(start)
-            guard duration > 0, duration.isFinite else { return }
+            let minimumPlausibleDuration = distanceMeters / maximumPlausibleRunningSpeedMetersPerSecond
+            guard duration >= minimumPlausibleDuration, duration.isFinite else { return }
             if duration < (best?.duration ?? .infinity) {
                 best = (start, end, duration)
             }

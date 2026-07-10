@@ -253,13 +253,9 @@ struct SummaryView: View {
         Section {
             ForEach(BestEffortDistance.allCases) { distance in
                 if let result = bestEfforts[distance] {
-                    if let workout = appState.bestEffortWorkout(for: result.workoutID) {
-                        NavigationLink {
-                            ActivityDetailView(workout: workout, reviewedBestEffort: result)
-                        } label: {
-                            BestEffortRow(distance: distance, result: result)
-                        }
-                    } else {
+                    NavigationLink {
+                        BestEffortActivityDestination(result: result)
+                    } label: {
                         BestEffortRow(distance: distance, result: result)
                     }
                 } else {
@@ -500,6 +496,50 @@ struct SummaryView: View {
         guard let value else { return "--" }
         let sign = value >= 0 ? "+" : ""
         return "\(sign)\(String(format: "%.1f", value))"
+    }
+}
+
+private struct BestEffortActivityDestination: View {
+    @Environment(AppState.self) private var appState
+    let result: BestEffortResult
+
+    var body: some View {
+        Group {
+            if let workout = appState.bestEffortWorkout(for: result.workoutID) {
+                ActivityDetailView(workout: workout, reviewedBestEffort: result)
+            } else if let error = appState.bestEffortDetailError(for: result.workoutID) {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                    Text("Activity Unavailable")
+                        .font(.headline)
+                    Text(error)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button {
+                        Task { await appState.loadBestEffortWorkout(result.workoutID) }
+                    } label: {
+                        Label("Retry", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding()
+            } else {
+                VStack(spacing: 10) {
+                    ThinkingIndicator()
+                    Text("Loading Activity")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(result.distance.displayName)
+        .task(id: result.workoutID) {
+            await appState.loadBestEffortWorkout(result.workoutID)
+        }
     }
 }
 

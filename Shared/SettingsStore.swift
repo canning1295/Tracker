@@ -8,7 +8,7 @@ struct SettingsStore {
     private let stravaUploadsKey = "workout.stravaUploads.v1"
     private let deletedWorkoutIDsKey = "workout.deletedWorkoutIDs.v1"
     private let excludedBestEffortWorkoutIDsKey = "workout.excludedBestEffortWorkoutIDs.v1"
-    private let bestEffortCacheKey = "workout.bestEffortCache.v1"
+    private let bestEffortCacheKey = "workout.bestEffortCache.v2"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults

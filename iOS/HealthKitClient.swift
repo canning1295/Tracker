@@ -213,6 +213,30 @@ final class HealthKitClient {
         )
     }
 
+    func loadWorkout(id: UUID, userMetrics: UserMetrics = UserMetrics()) async throws -> WorkoutSummary {
+        let workout = try await workout(id: id)
+        guard let activity = WorkoutActivity.fromHealthKit(activityType: workout.workoutActivityType, isIndoor: workout.isIndoorWorkout) else {
+            throw HealthKitClientError.unsupportedWorkout
+        }
+
+        let details = await workoutDetails(for: workout, activity: activity)
+        return WorkoutSummary(
+            id: id,
+            source: .healthKit,
+            activity: activity,
+            startDate: workout.startDate,
+            endDate: workout.endDate,
+            duration: workout.duration,
+            distanceMeters: distanceMeters(for: workout, activity: activity),
+            activeEnergyKilocalories: activeEnergyKilocalories(for: workout, userMetrics: userMetrics),
+            averageHeartRate: details.averageHeartRate,
+            maxHeartRate: details.maxHeartRate,
+            route: details.route,
+            heartRateSamples: details.heartRateSamples,
+            stravaState: .notUploaded
+        )
+    }
+
     private func workout(id: UUID) async throws -> HKWorkout {
         try await withCheckedThrowingContinuation { continuation in
             let predicate = HKQuery.predicateForObject(with: id)
@@ -409,6 +433,7 @@ final class HealthKitClient {
 enum HealthKitClientError: LocalizedError {
     case healthDataUnavailable
     case workoutNotFound
+    case unsupportedWorkout
     case deleteFailed
 
     var errorDescription: String? {
@@ -417,6 +442,8 @@ enum HealthKitClientError: LocalizedError {
             return "Health data is not available on this device."
         case .workoutNotFound:
             return "That workout was not found in Apple Health."
+        case .unsupportedWorkout:
+            return "This workout type is not supported by Tracker."
         case .deleteFailed:
             return "Apple Health did not delete the workout."
         }

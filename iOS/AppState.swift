@@ -55,6 +55,8 @@ final class AppState {
         }
     }
     private(set) var bestEffortReviewWorkouts: [UUID: WorkoutSummary] = [:]
+    private(set) var bestEffortDetailLoadingIDs: Set<UUID> = []
+    private(set) var bestEffortDetailErrors: [UUID: String] = [:]
     private(set) var isLoadingAllTimeBestEfforts = false
     private(set) var bestEffortProcessedCount = 0
     private(set) var bestEffortCandidateCount = 0
@@ -276,7 +278,36 @@ final class AppState {
     }
 
     func bestEffortWorkout(for workoutID: UUID) -> WorkoutSummary? {
-        latestWorkout(for: workoutID) ?? bestEffortReviewWorkouts[workoutID]
+        if let reviewedWorkout = bestEffortReviewWorkouts[workoutID] {
+            return reviewedWorkout
+        }
+        guard let recentWorkout = latestWorkout(for: workoutID), !recentWorkout.route.isEmpty else {
+            return nil
+        }
+        return recentWorkout
+    }
+
+    func bestEffortDetailError(for workoutID: UUID) -> String? {
+        bestEffortDetailErrors[workoutID]
+    }
+
+    func loadBestEffortWorkout(_ workoutID: UUID) async {
+        guard bestEffortWorkout(for: workoutID) == nil,
+              !bestEffortDetailLoadingIDs.contains(workoutID) else {
+            return
+        }
+
+        bestEffortDetailErrors.removeValue(forKey: workoutID)
+        bestEffortDetailLoadingIDs.insert(workoutID)
+        defer { bestEffortDetailLoadingIDs.remove(workoutID) }
+
+        do {
+            let workout = try await healthKit.loadWorkout(id: workoutID, userMetrics: settings.userMetrics)
+            guard !deletedWorkoutIDs.contains(workoutID) else { return }
+            bestEffortReviewWorkouts[workoutID] = workout
+        } catch {
+            bestEffortDetailErrors[workoutID] = error.localizedDescription
+        }
     }
 
     func refreshAllTimeBestEfforts() async {
@@ -665,6 +696,7 @@ final class AppState {
             bestEffortCache = updatedCache
         }
         bestEffortReviewWorkouts.removeValue(forKey: workoutID)
+        bestEffortDetailErrors.removeValue(forKey: workoutID)
         bestEffortRefreshRevision += 1
     }
 
