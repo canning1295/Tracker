@@ -102,7 +102,7 @@ enum DistanceUnit: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum BestEffortDistance: String, CaseIterable, Identifiable, Hashable {
+enum BestEffortDistance: String, Codable, CaseIterable, Identifiable, Hashable {
     case meters100
     case meters200
     case meters400
@@ -692,7 +692,7 @@ struct RoutePoint: Codable, Hashable {
     var horizontalAccuracy: Double?
 }
 
-struct BestEffortResult: Identifiable, Hashable {
+struct BestEffortResult: Codable, Identifiable, Hashable {
     var id: BestEffortDistance { distance }
     var distance: BestEffortDistance
     var workoutID: UUID
@@ -700,6 +700,56 @@ struct BestEffortResult: Identifiable, Hashable {
     var duration: TimeInterval
     var segmentStart: Date
     var segmentEnd: Date
+}
+
+struct BestEffortWorkoutCacheEntry: Codable, Hashable, Identifiable {
+    var id: UUID { workoutID }
+    var workoutID: UUID
+    var workoutStartDate: Date
+    var efforts: [BestEffortResult]
+}
+
+struct BestEffortCache: Codable, Hashable {
+    var entries: [BestEffortWorkoutCacheEntry] = []
+
+    func hasEvaluated(_ workoutID: UUID) -> Bool {
+        entries.contains { $0.workoutID == workoutID }
+    }
+
+    mutating func store(
+        workoutID: UUID,
+        workoutStartDate: Date,
+        efforts: [BestEffortDistance: BestEffortResult]
+    ) {
+        let entry = BestEffortWorkoutCacheEntry(
+            workoutID: workoutID,
+            workoutStartDate: workoutStartDate,
+            efforts: BestEffortDistance.allCases.compactMap { efforts[$0] }
+        )
+        if let index = entries.firstIndex(where: { $0.workoutID == workoutID }) {
+            entries[index] = entry
+        } else {
+            entries.append(entry)
+        }
+    }
+
+    mutating func remove(_ workoutID: UUID) {
+        entries.removeAll { $0.workoutID == workoutID }
+    }
+
+    mutating func retain(workoutIDs: Set<UUID>) {
+        entries.removeAll { !workoutIDs.contains($0.workoutID) }
+    }
+
+    func fastestEfforts(excluding excludedWorkoutIDs: Set<UUID> = []) -> [BestEffortDistance: BestEffortResult] {
+        var fastest: [BestEffortDistance: BestEffortResult] = [:]
+        for entry in entries where !excludedWorkoutIDs.contains(entry.workoutID) {
+            for result in entry.efforts where result.duration < (fastest[result.distance]?.duration ?? .infinity) {
+                fastest[result.distance] = result
+            }
+        }
+        return fastest
+    }
 }
 
 struct HeartRateSample: Codable, Hashable, Identifiable {

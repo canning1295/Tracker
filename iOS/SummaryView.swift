@@ -102,6 +102,11 @@ private struct SummaryRefreshKey: Hashable {
     var appRevision: Int
 }
 
+private struct RecordsRefreshKey: Hashable {
+    var report: SummaryReport
+    var appRevision: Int
+}
+
 private struct SummaryComputationInput {
     var workouts: [WorkoutSummary]
     var activityEdits: [ActivityEdit]
@@ -109,8 +114,6 @@ private struct SummaryComputationInput {
     var userMetrics: UserMetrics
     var interval: DateInterval
     var activityFilter: SummaryActivityFilter
-    var excludedBestEffortWorkoutIDs: Set<UUID>
-    var report: SummaryReport
 }
 
 private struct SummarySnapshot {
@@ -118,7 +121,6 @@ private struct SummarySnapshot {
     var summary: WeeklySummary
     var recentWeeks: [WeeklySummary]
     var vo2History: VO2MaxEstimator.HistorySummary?
-    var bestEfforts: [BestEffortDistance: BestEffortResult]
 
     init(input: SummaryComputationInput) {
         let editByWorkoutID = input.activityEdits.reduce(into: [UUID: ActivityEdit]()) { partial, edit in
@@ -131,11 +133,6 @@ private struct SummarySnapshot {
             )
         }
         let filteredWorkouts = adjustedWorkouts.filter { input.activityFilter.includes($0.activity) }
-        let recordWorkouts = adjustedWorkouts.filter {
-            $0.activity == .outdoorRun &&
-                $0.startDate >= input.interval.start &&
-                $0.startDate < input.interval.end
-        }
 
         interval = input.interval
         summary = SummaryEngine.summary(
@@ -153,12 +150,6 @@ private struct SummarySnapshot {
             userMetrics: input.userMetrics,
             settings: input.heartRateSettings
         )
-        bestEfforts = input.report == .records
-            ? BestEffortEngine.fastestEfforts(
-                workouts: recordWorkouts,
-                excluding: input.excludedBestEffortWorkoutIDs
-            )
-            : [:]
     }
 }
 
@@ -175,6 +166,7 @@ struct SummaryView: View {
 
     var body: some View {
         let refreshKey = summaryRefreshKey
+        let recordsKey = recordsRefreshKey
 
         List {
             Section {
@@ -187,77 +179,87 @@ struct SummaryView: View {
                 .labelsHidden()
             }
 
-            Section("Range") {
-                Picker("Period", selection: $rangePreset) {
-                    ForEach(SummaryRangePreset.allCases) { preset in
-                        Text(preset.displayName).tag(preset)
+            if report == .overview {
+                Section("Range") {
+                    Picker("Period", selection: $rangePreset) {
+                        ForEach(SummaryRangePreset.allCases) { preset in
+                            Text(preset.displayName).tag(preset)
+                        }
                     }
-                }
-                .pickerStyle(.menu)
+                    .pickerStyle(.menu)
 
-                if report == .overview {
                     Picker("Activity", selection: $activityFilter) {
                         ForEach(SummaryActivityFilter.pickerOptions) { filter in
                             Text(filter.displayName).tag(filter)
                         }
                     }
                     .pickerStyle(.menu)
-                }
 
-                if rangePreset == .custom {
-                    DatePicker(selection: $customStart, displayedComponents: .date) {
-                        Label("Start", systemImage: "calendar")
-                    }
-                    DatePicker(selection: $customEnd, displayedComponents: .date) {
-                        Label("End", systemImage: "calendar")
-                    }
-                } else {
-                    DatePicker(selection: $anchorDate, displayedComponents: .date) {
-                        Label("Date", systemImage: "calendar")
+                    if rangePreset == .custom {
+                        DatePicker(selection: $customStart, displayedComponents: .date) {
+                            Label("Start", systemImage: "calendar")
+                        }
+                        DatePicker(selection: $customEnd, displayedComponents: .date) {
+                            Label("End", systemImage: "calendar")
+                        }
+                    } else {
+                        DatePicker(selection: $anchorDate, displayedComponents: .date) {
+                            Label("Date", systemImage: "calendar")
+                        }
                     }
                 }
             }
 
-            if let summarySnapshot {
-                if report == .overview {
+            if report == .overview {
+                if let summarySnapshot {
                     summarySections(for: summarySnapshot)
                 } else {
-                    bestEffortSections(for: summarySnapshot)
+                    Section {
+                        HStack {
+                            Spacer()
+                            ThinkingIndicator()
+                            Spacer()
+                        }
+                        .padding(.vertical, 12)
+                        .accessibilityLabel("Loading Summary")
+                    }
                 }
             } else {
-                Section {
-                    HStack {
-                        Spacer()
-                        ThinkingIndicator()
-                        Spacer()
-                    }
-                    .padding(.vertical, 12)
-                    .accessibilityLabel("Loading Summary")
-                }
+                bestEffortSections()
             }
         }
         .navigationTitle("Summary")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if (isLoadingSummary && summarySnapshot != nil) || (report == .records && isLoadingBestEffortRoutes) {
+                if (report == .overview && isLoadingSummary && summarySnapshot != nil) ||
+                    (report == .records && appState.isLoadingAllTimeBestEfforts) {
                     ThinkingIndicator()
                 }
             }
         }
         .task(id: refreshKey) {
+            guard report == .overview else { return }
             await refreshSummary(for: refreshKey)
+        }
+        .task(id: recordsKey) {
+            guard report == .records else { return }
+            await appState.refreshAllTimeBestEfforts()
         }
     }
 
     @ViewBuilder
-    private func bestEffortSections(for snapshot: SummarySnapshot) -> some View {
+    private func bestEffortSections() -> some View {
+        let bestEfforts = appState.bestEffortResults
         Section {
             ForEach(BestEffortDistance.allCases) { distance in
-                if let result = snapshot.bestEfforts[distance],
-                   let workout = appState.latestWorkout(for: result.workoutID) {
-                    NavigationLink {
-                        ActivityDetailView(workout: workout, reviewedBestEffort: result)
-                    } label: {
+                if let result = bestEfforts[distance] {
+                    if let workout = appState.bestEffortWorkout(for: result.workoutID) {
+                        NavigationLink {
+                            ActivityDetailView(workout: workout, reviewedBestEffort: result)
+                        } label: {
+                            BestEffortRow(distance: distance, result: result)
+                        }
+                    } else {
                         BestEffortRow(distance: distance, result: result)
                     }
                 } else {
@@ -265,21 +267,28 @@ struct SummaryView: View {
                 }
             }
 
-            if isLoadingBestEffortRoutes {
+            if appState.isLoadingAllTimeBestEfforts {
                 HStack {
                     Spacer()
-                    ThinkingIndicator()
+                    VStack(spacing: 6) {
+                        ThinkingIndicator()
+                        if appState.bestEffortCandidateCount > 0 {
+                            Text("Updating \(appState.bestEffortProcessedCount) of \(appState.bestEffortCandidateCount) runs")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Spacer()
                 }
                 .padding(.vertical, 4)
-                .accessibilityLabel("Loading Run Routes")
+                .accessibilityLabel("Updating All-Time Records")
+            } else if let error = appState.bestEffortLoadingError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         } header: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Running Best Efforts")
-                Text(summaryHeader(for: snapshot.interval))
-                    .font(.caption2)
-            }
+            Text("All-Time Running Records")
         }
     }
 
@@ -426,9 +435,7 @@ struct SummaryView: View {
             heartRateSettings: appState.settings.heartRate,
             userMetrics: appState.settings.userMetrics,
             interval: DateInterval(start: key.intervalStart, end: key.intervalEnd),
-            activityFilter: key.activityFilter,
-            excludedBestEffortWorkoutIDs: appState.excludedBestEffortWorkoutIDs,
-            report: key.report
+            activityFilter: key.activityFilter
         )
 
         let snapshot = await Task.detached(priority: .userInitiated) {
@@ -461,13 +468,8 @@ struct SummaryView: View {
         }
     }
 
-    private var isLoadingBestEffortRoutes: Bool {
-        appState.workouts.contains { workout in
-            workout.activity == .outdoorRun &&
-                workout.startDate >= selectedInterval.start &&
-                workout.startDate < selectedInterval.end &&
-                appState.isLoadingDetails(for: workout.id)
-        }
+    private var recordsRefreshKey: RecordsRefreshKey {
+        RecordsRefreshKey(report: report, appRevision: appState.bestEffortRefreshRevision)
     }
 
     private func summaryHeader(for interval: DateInterval) -> String {

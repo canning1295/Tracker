@@ -218,6 +218,47 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(efforts[.meters100]?.duration, 90)
     }
 
+    func testBestEffortCacheKeepsAllTimeWinnerAndRevealsNextAfterExclusion() throws {
+        let fastWorkoutID = UUID()
+        let slowerWorkoutID = UUID()
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        var cache = BestEffortCache()
+        cache.store(
+            workoutID: fastWorkoutID,
+            workoutStartDate: start,
+            efforts: [
+                .meters100: BestEffortResult(
+                    distance: .meters100,
+                    workoutID: fastWorkoutID,
+                    workoutStartDate: start,
+                    duration: 12,
+                    segmentStart: start,
+                    segmentEnd: start.addingTimeInterval(12)
+                )
+            ]
+        )
+        cache.store(
+            workoutID: slowerWorkoutID,
+            workoutStartDate: start.addingTimeInterval(86_400),
+            efforts: [
+                .meters100: BestEffortResult(
+                    distance: .meters100,
+                    workoutID: slowerWorkoutID,
+                    workoutStartDate: start.addingTimeInterval(86_400),
+                    duration: 15,
+                    segmentStart: start.addingTimeInterval(86_400),
+                    segmentEnd: start.addingTimeInterval(86_415)
+                )
+            ]
+        )
+
+        XCTAssertEqual(try XCTUnwrap(cache.fastestEfforts()[.meters100]).workoutID, fastWorkoutID)
+        XCTAssertEqual(
+            try XCTUnwrap(cache.fastestEfforts(excluding: [fastWorkoutID])[.meters100]).workoutID,
+            slowerWorkoutID
+        )
+    }
+
     func testRollingPaceRefreshCadenceUsesConfiguredWindow() {
         XCTAssertTrue(PaceCalculator.shouldRefreshDisplayedPace(
             elapsedSeconds: 1,
@@ -320,6 +361,32 @@ final class WorkoutCoreTests: XCTestCase {
         let excludedIDs: Set<UUID> = [UUID(), UUID()]
         store.saveExcludedBestEffortWorkoutIDs(excludedIDs)
         XCTAssertEqual(store.loadExcludedBestEffortWorkoutIDs(), excludedIDs)
+    }
+
+    func testSettingsStoreRoundTripsBestEffortCache() throws {
+        let suiteName = "TrackerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let workoutID = UUID()
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let result = BestEffortResult(
+            distance: .kilometer,
+            workoutID: workoutID,
+            workoutStartDate: start,
+            duration: 240,
+            segmentStart: start,
+            segmentEnd: start.addingTimeInterval(240)
+        )
+        var cache = BestEffortCache()
+        cache.store(workoutID: workoutID, workoutStartDate: start, efforts: [.kilometer: result])
+
+        let store = SettingsStore(defaults: defaults)
+        store.saveBestEffortCache(cache)
+
+        XCTAssertEqual(store.loadBestEffortCache(), cache)
     }
 
     func testWorkoutSettingsDecodeOldPayloadWithNewDefaults() throws {

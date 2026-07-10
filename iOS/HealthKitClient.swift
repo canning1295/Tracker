@@ -120,9 +120,38 @@ final class HealthKitClient {
     }
 
     func loadRecentWorkouts(limit: Int, includesDetails: Bool = true, userMetrics: UserMetrics = UserMetrics()) async throws -> [WorkoutSummary] {
+        try await loadWorkoutSummaries(
+            predicate: nil,
+            limit: limit,
+            includesDetails: includesDetails,
+            userMetrics: userMetrics
+        )
+    }
+
+    func loadAllOutdoorRuns(userMetrics: UserMetrics = UserMetrics()) async throws -> [WorkoutSummary] {
+        let runningPredicate = HKQuery.predicateForWorkouts(with: .running)
+        return try await loadWorkoutSummaries(
+            predicate: runningPredicate,
+            limit: HKObjectQueryNoLimit,
+            includesDetails: false,
+            userMetrics: userMetrics
+        ).filter { $0.activity == .outdoorRun }
+    }
+
+    func loadWorkoutRoute(for summary: WorkoutSummary) async throws -> [RoutePoint] {
+        let workout = try await workout(id: summary.id)
+        return try await routePoints(for: workout)
+    }
+
+    private func loadWorkoutSummaries(
+        predicate: NSPredicate?,
+        limit: Int,
+        includesDetails: Bool,
+        userMetrics: UserMetrics
+    ) async throws -> [WorkoutSummary] {
         let workouts: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
             let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
-            let query = HKSampleQuery(sampleType: .workoutType(), predicate: nil, limit: limit, sortDescriptors: [sort]) { _, samples, error in
+            let query = HKSampleQuery(sampleType: .workoutType(), predicate: predicate, limit: limit, sortDescriptors: [sort]) { _, samples, error in
                 if let error {
                     continuation.resume(throwing: error)
                     return

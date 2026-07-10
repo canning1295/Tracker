@@ -49,6 +49,17 @@ final class AppState {
             settingsStore.saveExcludedBestEffortWorkoutIDs(excludedBestEffortWorkoutIDs)
         }
     }
+    private(set) var bestEffortCache: BestEffortCache {
+        didSet {
+            settingsStore.saveBestEffortCache(bestEffortCache)
+        }
+    }
+    private(set) var bestEffortReviewWorkouts: [UUID: WorkoutSummary] = [:]
+    private(set) var isLoadingAllTimeBestEfforts = false
+    private(set) var bestEffortProcessedCount = 0
+    private(set) var bestEffortCandidateCount = 0
+    private(set) var bestEffortRefreshRevision = 0
+    private(set) var bestEffortLoadingError: String?
     var stravaUploads: [StravaUploadRecord] {
         didSet {
             settingsStore.saveStravaUploads(stravaUploads)
@@ -136,6 +147,7 @@ final class AppState {
         self.intervals = settingsStore.loadIntervals()
         self.activityEdits = settingsStore.loadActivityEdits()
         self.excludedBestEffortWorkoutIDs = settingsStore.loadExcludedBestEffortWorkoutIDs()
+        self.bestEffortCache = settingsStore.loadBestEffortCache()
         self.stravaUploads = settingsStore.loadStravaUploads()
         self.deletedWorkoutIDs = settingsStore.loadDeletedWorkoutIDs()
         let credentials = strava.storedCredentials()
@@ -180,6 +192,7 @@ final class AppState {
             guard generation == healthRefreshGeneration else { return }
             let visibleHealthWorkouts = healthWorkouts.filter { !deletedWorkoutIDs.contains($0.id) }
             workouts = mergedWithExistingDetails(visibleHealthWorkouts)
+            bestEffortRefreshRevision += 1
             healthDetailLoadingIDs = Set(visibleHealthWorkouts.map(\.id))
             authorizationMessage = healthWorkouts.isEmpty ? "No supported Apple Health workouts were found." : nil
             isLoadingWorkouts = false
@@ -258,6 +271,60 @@ final class AppState {
         healthDetailLoadingIDs.contains(workoutID)
     }
 
+    var bestEffortResults: [BestEffortDistance: BestEffortResult] {
+        bestEffortCache.fastestEfforts(excluding: excludedBestEffortWorkoutIDs)
+    }
+
+    func bestEffortWorkout(for workoutID: UUID) -> WorkoutSummary? {
+        latestWorkout(for: workoutID) ?? bestEffortReviewWorkouts[workoutID]
+    }
+
+    func refreshAllTimeBestEfforts() async {
+        guard !isLoadingAllTimeBestEfforts else { return }
+        isLoadingAllTimeBestEfforts = true
+        bestEffortProcessedCount = 0
+        bestEffortCandidateCount = 0
+        bestEffortLoadingError = nil
+        defer {
+            isLoadingAllTimeBestEfforts = false
+        }
+
+        do {
+            try await healthKit.requestAuthorization()
+            let allRuns = try await healthKit.loadAllOutdoorRuns(userMetrics: settings.userMetrics)
+                .filter { !deletedWorkoutIDs.contains($0.id) }
+            let allRunIDs = Set(allRuns.map(\.id))
+            var retainedCache = bestEffortCache
+            if !allRunIDs.isEmpty {
+                retainedCache.retain(workoutIDs: allRunIDs)
+            }
+            if retainedCache != bestEffortCache {
+                bestEffortCache = retainedCache
+            }
+
+            let evaluatedIDs = Set(bestEffortCache.entries.map(\.workoutID))
+            let candidates = allRuns.filter { !evaluatedIDs.contains($0.id) }
+            bestEffortCandidateCount = candidates.count
+
+            for workout in candidates {
+                guard !Task.isCancelled else { return }
+                guard let route = try? await healthKit.loadWorkoutRoute(for: workout) else {
+                    bestEffortProcessedCount += 1
+                    continue
+                }
+                var routedWorkout = workout
+                routedWorkout.route = route
+                await cacheBestEfforts(for: routedWorkout)
+                bestEffortProcessedCount += 1
+            }
+
+            guard !Task.isCancelled else { return }
+            await loadBestEffortReviewWorkouts(from: allRuns)
+        } catch {
+            bestEffortLoadingError = error.localizedDescription
+        }
+    }
+
     var adjustedWorkouts: [WorkoutSummary] {
         workouts.map(adjustedWorkout)
     }
@@ -267,6 +334,7 @@ final class AppState {
 
         guard edit.hasAdjustments else {
             activityEdits.removeAll { $0.workoutID == edit.workoutID }
+            invalidateBestEffortCache(for: edit.workoutID, activity: workout?.activity)
             refreshStravaQueueAfterLocalEdit(for: workout)
             return
         }
@@ -276,6 +344,7 @@ final class AppState {
         } else {
             activityEdits.append(edit)
         }
+        invalidateBestEffortCache(for: edit.workoutID, activity: workout?.activity)
         refreshStravaQueueAfterLocalEdit(for: workout)
     }
 
@@ -292,6 +361,7 @@ final class AppState {
         }
         guard updated != excludedBestEffortWorkoutIDs else { return }
         excludedBestEffortWorkoutIDs = updated
+        bestEffortRefreshRevision += 1
     }
 
     func deleteWorkout(_ workout: WorkoutSummary) async -> Bool {
@@ -299,6 +369,7 @@ final class AppState {
         healthDetailLoadingIDs.remove(workout.id)
         workouts.removeAll { $0.id == workout.id }
         activityEdits.removeAll { $0.workoutID == workout.id }
+        invalidateBestEffortCache(for: workout.id, activity: workout.activity)
         setBestEffortInclusion(true, for: workout.id)
         stravaUploads.removeAll { $0.workoutID == workout.id }
 
@@ -529,6 +600,7 @@ final class AppState {
                 continue
             }
             upsertWorkout(detailedWorkout)
+            await cacheBestEfforts(for: detailedWorkout)
             healthDetailLoadingIDs.remove(workout.id)
         }
 
@@ -545,6 +617,55 @@ final class AppState {
             workouts.append(workout)
             workouts.sort { $0.startDate > $1.startDate }
         }
+    }
+
+    private func cacheBestEfforts(for workout: WorkoutSummary) async {
+        guard workout.activity == .outdoorRun, !bestEffortCache.hasEvaluated(workout.id) else { return }
+        if workout.distanceMeters >= BestEffortDistance.meters100.meters {
+            guard workout.route.count >= 2 else { return }
+        }
+        let adjustedWorkout = adjustedWorkout(workout)
+        let efforts = await Task.detached(priority: .utility) {
+            BestEffortEngine.fastestEfforts(workouts: [adjustedWorkout])
+        }.value
+        guard !Task.isCancelled else { return }
+        var updatedCache = bestEffortCache
+        updatedCache.store(
+            workoutID: workout.id,
+            workoutStartDate: workout.startDate,
+            efforts: efforts
+        )
+        bestEffortCache = updatedCache
+    }
+
+    private func loadBestEffortReviewWorkouts(from metadataWorkouts: [WorkoutSummary]) async {
+        let recordIDs = Set(bestEffortResults.values.map(\.workoutID))
+        bestEffortReviewWorkouts = bestEffortReviewWorkouts.filter { recordIDs.contains($0.key) }
+        let metadataByID = Dictionary(uniqueKeysWithValues: metadataWorkouts.map { ($0.id, $0) })
+
+        for workoutID in recordIDs where bestEffortReviewWorkouts[workoutID] == nil {
+            guard !Task.isCancelled else { return }
+            if let recentWorkout = latestWorkout(for: workoutID), !recentWorkout.route.isEmpty {
+                bestEffortReviewWorkouts[workoutID] = recentWorkout
+                continue
+            }
+            guard let metadata = metadataByID[workoutID],
+                  let detailedWorkout = try? await healthKit.loadWorkoutDetails(for: metadata, userMetrics: settings.userMetrics) else {
+                continue
+            }
+            bestEffortReviewWorkouts[workoutID] = detailedWorkout
+        }
+    }
+
+    private func invalidateBestEffortCache(for workoutID: UUID, activity: WorkoutActivity?) {
+        guard activity == .outdoorRun || bestEffortCache.hasEvaluated(workoutID) else { return }
+        var updatedCache = bestEffortCache
+        updatedCache.remove(workoutID)
+        if updatedCache != bestEffortCache {
+            bestEffortCache = updatedCache
+        }
+        bestEffortReviewWorkouts.removeValue(forKey: workoutID)
+        bestEffortRefreshRevision += 1
     }
 
     private func mergedWithExistingDetails(_ metadataWorkouts: [WorkoutSummary]) -> [WorkoutSummary] {

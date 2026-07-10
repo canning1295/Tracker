@@ -8,6 +8,7 @@ struct SettingsStore {
     private let stravaUploadsKey = "workout.stravaUploads.v1"
     private let deletedWorkoutIDsKey = "workout.deletedWorkoutIDs.v1"
     private let excludedBestEffortWorkoutIDsKey = "workout.excludedBestEffortWorkoutIDs.v1"
+    private let bestEffortCacheKey = "workout.bestEffortCache.v1"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -73,5 +74,15 @@ struct SettingsStore {
     func saveExcludedBestEffortWorkoutIDs(_ ids: Set<UUID>) {
         guard let data = try? JSONEncoder().encode(Array(ids)) else { return }
         defaults.set(data, forKey: excludedBestEffortWorkoutIDsKey)
+    }
+
+    func loadBestEffortCache() -> BestEffortCache {
+        guard let data = defaults.data(forKey: bestEffortCacheKey) else { return BestEffortCache() }
+        return (try? JSONDecoder().decode(BestEffortCache.self, from: data)) ?? BestEffortCache()
+    }
+
+    func saveBestEffortCache(_ cache: BestEffortCache) {
+        guard let data = try? JSONEncoder().encode(cache) else { return }
+        defaults.set(data, forKey: bestEffortCacheKey)
     }
 }
