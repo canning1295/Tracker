@@ -217,10 +217,12 @@ struct ActivitySelectionView: View {
             screenIndex: 1,
             screenCount: 3,
             onSelect: onSelect,
-            onBack: onBack
+            onBack: onBack,
+            topPadding: 0
         ) { activity, isSelected in
             CrownMenuRow(title: activity.displayName, systemImage: activity.symbolName, isSelected: isSelected)
         }
+        ._statusBarHidden(true)
     }
 
     private var activities: [WorkoutActivity] {

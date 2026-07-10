@@ -11,6 +11,7 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
     var onForward: ((Option) -> Void)?
     var fillRows = false
     var showsPageDots = false
+    var topPadding: CGFloat = 4
     @ViewBuilder let rowContent: (Option, Bool) -> RowContent
 
     @FocusState private var focused: Bool
@@ -62,7 +63,8 @@ struct CrownMenu<Option: Identifiable, RowContent: View>: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.top, topPadding)
+        .padding(.bottom, 4)
         .focusable(!options.isEmpty)
         .focused($focused)
         .digitalCrownRotation(
