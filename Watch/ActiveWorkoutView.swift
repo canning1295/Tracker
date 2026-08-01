@@ -36,6 +36,11 @@ struct ActiveWorkoutView: View {
         }
         .tabViewStyle(.page(indexDisplayMode: .always))
         .navigationBarBackButtonHidden(true)
+        .onChange(of: watchState.settings.touchControlsEnabled) { _, isEnabled in
+            if !isEnabled {
+                page = 0
+            }
+        }
     }
 
     private var hasOutdoorMap: Bool {
