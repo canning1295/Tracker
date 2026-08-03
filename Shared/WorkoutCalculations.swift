@@ -427,11 +427,61 @@ struct SplitSummary: Equatable {
     var paceSecondsPerUnit: Double?
 }
 
+enum WorkoutTimeline {
+    static func mergedPauseRanges(_ ranges: [DateRangeValue]) -> [DateRangeValue] {
+        let sorted = ranges
+            .filter { $0.end > $0.start }
+            .sorted { $0.start < $1.start }
+
+        var merged: [DateRangeValue] = []
+        for range in sorted {
+            guard var last = merged.last else {
+                merged.append(range)
+                continue
+            }
+
+            if range.start <= last.end {
+                last.end = max(last.end, range.end)
+                merged[merged.count - 1] = last
+            } else {
+                merged.append(range)
+            }
+        }
+        return merged
+    }
+
+    static func pausedDuration(
+        from start: Date,
+        to end: Date,
+        mergedPauseRanges: [DateRangeValue]
+    ) -> TimeInterval {
+        guard end > start else { return 0 }
+        return mergedPauseRanges.reduce(0) { total, range in
+            let overlapStart = max(start, range.start)
+            let overlapEnd = min(end, range.end)
+            return total + max(0, overlapEnd.timeIntervalSince(overlapStart))
+        }
+    }
+
+    static func activeDuration(
+        from start: Date,
+        to end: Date,
+        mergedPauseRanges: [DateRangeValue]
+    ) -> TimeInterval {
+        max(0, end.timeIntervalSince(start) - pausedDuration(
+            from: start,
+            to: end,
+            mergedPauseRanges: mergedPauseRanges
+        ))
+    }
+}
+
 enum SplitBuilder {
     static func splits(for workout: WorkoutSummary, unit: DistanceUnit) -> [SplitSummary] {
         guard workout.activity.recordsDistance else { return [] }
+        let pauseRanges = WorkoutTimeline.mergedPauseRanges(workout.recordedPauseRanges)
         if workout.route.count > 1 {
-            let routeSplits = routeBasedSplits(points: workout.route, unit: unit)
+            let routeSplits = routeBasedSplits(points: workout.route, unit: unit, pauseRanges: pauseRanges)
             if !routeSplits.isEmpty {
                 return routeSplits
             }
@@ -440,7 +490,11 @@ enum SplitBuilder {
         return proportionalSplits(for: workout, unit: unit)
     }
 
-    private static func routeBasedSplits(points: [RoutePoint], unit: DistanceUnit) -> [SplitSummary] {
+    private static func routeBasedSplits(
+        points: [RoutePoint],
+        unit: DistanceUnit,
+        pauseRanges: [DateRangeValue]
+    ) -> [SplitSummary] {
         let sorted = points.sorted { $0.timestamp < $1.timestamp }
         guard let first = sorted.first, let last = sorted.last, sorted.count > 1 else { return [] }
 
@@ -452,6 +506,13 @@ enum SplitBuilder {
         var cumulativeDistance = 0.0
 
         for pair in zip(sorted, sorted.dropFirst()) {
+            let pausedSeconds = WorkoutTimeline.pausedDuration(
+                from: pair.0.timestamp,
+                to: pair.1.timestamp,
+                mergedPauseRanges: pauseRanges
+            )
+            guard pausedSeconds == 0 else { continue }
+
             let segmentDistance = PaceCalculator.distanceMeters(between: pair.0, and: pair.1)
             guard segmentDistance > 0 else { continue }
 
@@ -461,7 +522,11 @@ enum SplitBuilder {
                 let progress = (nextBoundaryDistance - cumulativeDistance) / segmentDistance
                 let boundaryPoint = interpolatedPoint(from: pair.0, to: pair.1, progress: min(max(progress, 0), 1))
                 let distance = nextBoundaryDistance - splitStartDistance
-                let duration = boundaryPoint.timestamp.timeIntervalSince(splitStartPoint.timestamp)
+                let duration = WorkoutTimeline.activeDuration(
+                    from: splitStartPoint.timestamp,
+                    to: boundaryPoint.timestamp,
+                    mergedPauseRanges: pauseRanges
+                )
                 splits.append(SplitSummary(
                     distanceMeters: distance,
                     paceSecondsPerUnit: PaceCalculator.paceSecondsPerUnit(distanceMeters: distance, elapsedSeconds: duration, unit: unit)
@@ -475,7 +540,11 @@ enum SplitBuilder {
         }
 
         let finalDistance = cumulativeDistance - splitStartDistance
-        let finalDuration = last.timestamp.timeIntervalSince(splitStartPoint.timestamp)
+        let finalDuration = WorkoutTimeline.activeDuration(
+            from: splitStartPoint.timestamp,
+            to: last.timestamp,
+            mergedPauseRanges: pauseRanges
+        )
         if finalDistance > 5, finalDuration > 0 {
             splits.append(SplitSummary(
                 distanceMeters: finalDistance,
@@ -539,10 +608,15 @@ enum BestEffortEngine {
         var fastest: [BestEffortDistance: BestEffortResult] = [:]
 
         for workout in workouts where !excludedWorkoutIDs.contains(workout.id) {
-            guard let samples = routeSamples(for: workout.route) else { continue }
+            let pauseRanges = WorkoutTimeline.mergedPauseRanges(workout.recordedPauseRanges)
+            guard let samples = routeSamples(for: workout.route, pauseRanges: pauseRanges) else { continue }
 
             for distance in BestEffortDistance.allCases {
-                guard let segment = fastestSegment(samples: samples, distanceMeters: distance.meters) else { continue }
+                guard let segment = fastestSegment(
+                    samples: samples,
+                    distanceMeters: distance.meters,
+                    pauseRanges: pauseRanges
+                ) else { continue }
                 let result = BestEffortResult(
                     distance: distance,
                     workoutID: workout.id,
@@ -560,7 +634,10 @@ enum BestEffortEngine {
         return fastest
     }
 
-    private static func routeSamples(for route: [RoutePoint]) -> [RouteSample]? {
+    private static func routeSamples(
+        for route: [RoutePoint],
+        pauseRanges: [DateRangeValue]
+    ) -> [RouteSample]? {
         let points = route
             .filter { point in
                 guard let accuracy = point.horizontalAccuracy else { return true }
@@ -575,6 +652,19 @@ enum BestEffortEngine {
 
         for point in points.dropFirst() {
             guard point.timestamp > previous.timestamp else { continue }
+            let pausedSeconds = WorkoutTimeline.pausedDuration(
+                from: previous.timestamp,
+                to: point.timestamp,
+                mergedPauseRanges: pauseRanges
+            )
+            if pausedSeconds > 0 {
+                samples.append(RouteSample(
+                    cumulativeDistanceMeters: cumulativeDistance,
+                    timestamp: point.timestamp
+                ))
+                previous = point
+                continue
+            }
             let elapsedSeconds = point.timestamp.timeIntervalSince(previous.timestamp)
             let segmentDistance = PaceCalculator.distanceMeters(between: previous, and: point)
             let speed = segmentDistance / elapsedSeconds
@@ -600,7 +690,8 @@ enum BestEffortEngine {
 
     private static func fastestSegment(
         samples: [RouteSample],
-        distanceMeters: Double
+        distanceMeters: Double,
+        pauseRanges: [DateRangeValue]
     ) -> (start: Date, end: Date, duration: TimeInterval)? {
         guard distanceMeters > 0,
               let totalDistance = samples.last?.cumulativeDistanceMeters,
@@ -611,7 +702,11 @@ enum BestEffortEngine {
         var best: (start: Date, end: Date, duration: TimeInterval)?
 
         func consider(start: Date, end: Date) {
-            let duration = end.timeIntervalSince(start)
+            let duration = WorkoutTimeline.activeDuration(
+                from: start,
+                to: end,
+                mergedPauseRanges: pauseRanges
+            )
             let minimumPlausibleDuration = distanceMeters / maximumPlausibleRunningSpeedMetersPerSecond
             guard duration >= minimumPlausibleDuration, duration.isFinite else { return }
             if duration < (best?.duration ?? .infinity) {
@@ -990,7 +1085,11 @@ enum WorkoutEditApplier {
             )
         }
 
-        let pauseRanges = normalizedPauseRanges(edit.removedPauses, start: keptStart, end: keptEndBeforePauses)
+        let pauseRanges = normalizedPauseRanges(
+            workout.recordedPauseRanges + edit.removedPauses,
+            start: keptStart,
+            end: keptEndBeforePauses
+        )
         let removedSeconds = pauseRanges.reduce(0) { $0 + $1.duration }
         let adjustedEnd = keptEndBeforePauses.addingTimeInterval(-removedSeconds)
         let adjustedRoute = adjustedRoutePoints(workout.route, start: keptStart, end: keptEndBeforePauses, pauseRanges: pauseRanges)

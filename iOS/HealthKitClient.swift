@@ -138,9 +138,12 @@ final class HealthKitClient {
         ).filter { $0.activity == .outdoorRun }
     }
 
-    func loadWorkoutRoute(for summary: WorkoutSummary) async throws -> [RoutePoint] {
+    func loadWorkoutRouteData(for summary: WorkoutSummary) async throws -> (route: [RoutePoint], recordedPauseRanges: [DateRangeValue]) {
         let workout = try await workout(id: summary.id)
-        return try await routePoints(for: workout)
+        return (
+            route: try await routePoints(for: workout),
+            recordedPauseRanges: recordedPauseRanges(for: workout)
+        )
     }
 
     private func loadWorkoutSummaries(
@@ -182,6 +185,7 @@ final class HealthKitClient {
                     maxHeartRate: details.maxHeartRate,
                     route: details.route,
                     heartRateSamples: details.heartRateSamples,
+                    recordedPauseRanges: details.recordedPauseRanges,
                     stravaState: .notUploaded
                 )
             )
@@ -209,6 +213,7 @@ final class HealthKitClient {
             maxHeartRate: details.maxHeartRate,
             route: details.route,
             heartRateSamples: details.heartRateSamples,
+            recordedPauseRanges: details.recordedPauseRanges,
             stravaState: summary.stravaState
         )
     }
@@ -233,6 +238,7 @@ final class HealthKitClient {
             maxHeartRate: details.maxHeartRate,
             route: details.route,
             heartRateSamples: details.heartRateSamples,
+            recordedPauseRanges: details.recordedPauseRanges,
             stravaState: .notUploaded
         )
     }
@@ -264,8 +270,40 @@ final class HealthKitClient {
             route: route,
             heartRateSamples: samples,
             averageHeartRate: heartRate.average,
-            maxHeartRate: heartRate.maximum
+            maxHeartRate: heartRate.maximum,
+            recordedPauseRanges: recordedPauseRanges(for: workout)
         )
+    }
+
+    private func recordedPauseRanges(for workout: HKWorkout) -> [DateRangeValue] {
+        var pauseStart: Date?
+        var ranges: [DateRangeValue] = []
+
+        let events = (workout.workoutEvents ?? []).sorted {
+            $0.dateInterval.start < $1.dateInterval.start
+        }
+        for event in events {
+            let eventDate = min(max(event.dateInterval.start, workout.startDate), workout.endDate)
+            switch event.type {
+            case .pause, .motionPaused:
+                if pauseStart == nil {
+                    pauseStart = eventDate
+                }
+            case .resume, .motionResumed:
+                guard let start = pauseStart else { continue }
+                if eventDate > start {
+                    ranges.append(DateRangeValue(start: start, end: eventDate))
+                }
+                pauseStart = nil
+            default:
+                continue
+            }
+        }
+
+        if let pauseStart, workout.endDate > pauseStart {
+            ranges.append(DateRangeValue(start: pauseStart, end: workout.endDate))
+        }
+        return WorkoutTimeline.mergedPauseRanges(ranges)
     }
 
     private func heartRateSamples(for workout: HKWorkout) async throws -> [HeartRateSample] {
@@ -455,8 +493,15 @@ private struct WorkoutDetails {
     var heartRateSamples: [HeartRateSample]
     var averageHeartRate: Int?
     var maxHeartRate: Int?
+    var recordedPauseRanges: [DateRangeValue]
 
-    static let empty = WorkoutDetails(route: [], heartRateSamples: [], averageHeartRate: nil, maxHeartRate: nil)
+    static let empty = WorkoutDetails(
+        route: [],
+        heartRateSamples: [],
+        averageHeartRate: nil,
+        maxHeartRate: nil,
+        recordedPauseRanges: []
+    )
 }
 
 private extension HKWorkout {

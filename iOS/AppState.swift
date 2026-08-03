@@ -339,12 +339,13 @@ final class AppState {
 
             for workout in candidates {
                 guard !Task.isCancelled else { return }
-                guard let route = try? await healthKit.loadWorkoutRoute(for: workout) else {
+                guard let routeData = try? await healthKit.loadWorkoutRouteData(for: workout) else {
                     bestEffortProcessedCount += 1
                     continue
                 }
                 var routedWorkout = workout
-                routedWorkout.route = route
+                routedWorkout.route = routeData.route
+                routedWorkout.recordedPauseRanges = routeData.recordedPauseRanges
                 await cacheBestEfforts(for: routedWorkout)
                 bestEffortProcessedCount += 1
             }

@@ -598,6 +598,7 @@ struct WorkoutSummary: Codable, Identifiable, Hashable {
     var maxHeartRate: Int?
     var route: [RoutePoint]
     var heartRateSamples: [HeartRateSample]
+    var recordedPauseRanges: [DateRangeValue]
     var stravaState: StravaUploadStatus
 
     init(
@@ -613,6 +614,7 @@ struct WorkoutSummary: Codable, Identifiable, Hashable {
         maxHeartRate: Int? = nil,
         route: [RoutePoint] = [],
         heartRateSamples: [HeartRateSample] = [],
+        recordedPauseRanges: [DateRangeValue] = [],
         stravaState: StravaUploadStatus = .notUploaded
     ) {
         self.id = id
@@ -627,7 +629,43 @@ struct WorkoutSummary: Codable, Identifiable, Hashable {
         self.maxHeartRate = maxHeartRate
         self.route = route
         self.heartRateSamples = heartRateSamples
+        self.recordedPauseRanges = recordedPauseRanges
         self.stravaState = stravaState
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case source
+        case activity
+        case startDate
+        case endDate
+        case duration
+        case distanceMeters
+        case activeEnergyKilocalories
+        case averageHeartRate
+        case maxHeartRate
+        case route
+        case heartRateSamples
+        case recordedPauseRanges
+        case stravaState
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        source = try container.decode(WorkoutDataSource.self, forKey: .source)
+        activity = try container.decode(WorkoutActivity.self, forKey: .activity)
+        startDate = try container.decode(Date.self, forKey: .startDate)
+        endDate = try container.decode(Date.self, forKey: .endDate)
+        duration = try container.decode(TimeInterval.self, forKey: .duration)
+        distanceMeters = try container.decode(Double.self, forKey: .distanceMeters)
+        activeEnergyKilocalories = try container.decode(Double.self, forKey: .activeEnergyKilocalories)
+        averageHeartRate = try container.decodeIfPresent(Int.self, forKey: .averageHeartRate)
+        maxHeartRate = try container.decodeIfPresent(Int.self, forKey: .maxHeartRate)
+        route = try container.decodeIfPresent([RoutePoint].self, forKey: .route) ?? []
+        heartRateSamples = try container.decodeIfPresent([HeartRateSample].self, forKey: .heartRateSamples) ?? []
+        recordedPauseRanges = try container.decodeIfPresent([DateRangeValue].self, forKey: .recordedPauseRanges) ?? []
+        stravaState = try container.decodeIfPresent(StravaUploadStatus.self, forKey: .stravaState) ?? .notUploaded
     }
 }
 

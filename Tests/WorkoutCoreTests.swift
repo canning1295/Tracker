@@ -218,6 +218,31 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(efforts[.meters100]?.duration, 90)
     }
 
+    func testBestEffortEngineExcludesRecordedPauseTime() throws {
+        let start = Date(timeIntervalSince1970: 1_750_000_000)
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(360),
+            duration: 60,
+            distanceMeters: 100,
+            activeEnergyKilocalories: 20,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: 50, seconds: 30, start: start),
+                routePoint(distanceMeters: 50, seconds: 330, start: start),
+                routePoint(distanceMeters: 100, seconds: 360, start: start)
+            ],
+            recordedPauseRanges: [
+                DateRangeValue(start: start.addingTimeInterval(30), end: start.addingTimeInterval(330))
+            ]
+        )
+
+        let efforts = BestEffortEngine.fastestEfforts(workouts: [workout])
+
+        XCTAssertEqual(try XCTUnwrap(efforts[.meters100]).duration, 60, accuracy: 0.001)
+    }
+
     func testBestEffortEngineRejectsGPSJumpsAndUsesPlausibleRoute() throws {
         let start = Date(timeIntervalSince1970: 1_750_000_000)
         let workout = WorkoutSummary(
@@ -788,6 +813,28 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(adjusted.heartRateSamples.last?.timestamp, start.addingTimeInterval(60))
     }
 
+    func testWorkoutEditKeepsRecordedPauseTimeExcluded() {
+        let start = Date(timeIntervalSince1970: 2_300)
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(180),
+            duration: 120,
+            distanceMeters: 1_000,
+            activeEnergyKilocalories: 120,
+            recordedPauseRanges: [
+                DateRangeValue(start: start.addingTimeInterval(60), end: start.addingTimeInterval(120))
+            ]
+        )
+        let edit = ActivityEdit(workoutID: workout.id, trimEndSeconds: 10)
+
+        let adjusted = WorkoutEditApplier.adjustedWorkout(workout, edit: edit)
+
+        XCTAssertEqual(adjusted.duration, 110)
+        XCTAssertEqual(adjusted.endDate, start.addingTimeInterval(110))
+        XCTAssertTrue(adjusted.recordedPauseRanges.isEmpty)
+    }
+
     func testSplitBuilderBuildsRouteBasedMileSplits() {
         let start = Date(timeIntervalSince1970: 2_500)
         let totalDistance = DistanceUnit.miles.metersPerUnit * 2.5
@@ -815,6 +862,39 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(splits[2].paceSecondsPerUnit ?? 0, 600, accuracy: 0.01)
     }
 
+    func testSplitBuilderExcludesRecordedPauseTimeAndDistance() {
+        let start = Date(timeIntervalSince1970: 2_700)
+        let mile = DistanceUnit.miles.metersPerUnit
+        let pausedMovement = 200.0
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_260),
+            duration: 960,
+            distanceMeters: mile * 2,
+            activeEnergyKilocalories: 250,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: mile * 0.5, seconds: 240, start: start),
+                routePoint(distanceMeters: mile * 0.5 + pausedMovement, seconds: 540, start: start),
+                routePoint(distanceMeters: mile + pausedMovement, seconds: 780, start: start),
+                routePoint(distanceMeters: mile * 1.5 + pausedMovement, seconds: 1_020, start: start),
+                routePoint(distanceMeters: mile * 2 + pausedMovement, seconds: 1_260, start: start)
+            ],
+            recordedPauseRanges: [
+                DateRangeValue(start: start.addingTimeInterval(240), end: start.addingTimeInterval(540))
+            ]
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+
+        XCTAssertEqual(splits.count, 2)
+        XCTAssertEqual(splits[0].distanceMeters, mile, accuracy: 0.01)
+        XCTAssertEqual(splits[1].distanceMeters, mile, accuracy: 0.01)
+        XCTAssertEqual(splits[0].paceSecondsPerUnit ?? 0, 480, accuracy: 0.01)
+        XCTAssertEqual(splits[1].paceSecondsPerUnit ?? 0, 480, accuracy: 0.01)
+    }
+
     func testSplitBuilderFallsBackToProportionalKilometerSplitsWithoutRoute() {
         let start = Date(timeIntervalSince1970: 2_800)
         let workout = WorkoutSummary(
@@ -834,6 +914,31 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(splits[2].distanceMeters, 500, accuracy: 0.01)
         XCTAssertEqual(splits[0].paceSecondsPerUnit ?? 0, 500, accuracy: 0.01)
         XCTAssertEqual(splits[2].paceSecondsPerUnit ?? 0, 500, accuracy: 0.01)
+    }
+
+    func testWorkoutSummaryDecodesWithoutRecordedPauseRanges() throws {
+        let start = Date(timeIntervalSince1970: 3_000)
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(60),
+            duration: 60,
+            distanceMeters: 100,
+            activeEnergyKilocalories: 20,
+            recordedPauseRanges: [
+                DateRangeValue(start: start.addingTimeInterval(20), end: start.addingTimeInterval(30))
+            ]
+        )
+        let encoded = try JSONEncoder().encode(workout)
+        var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        payload.removeValue(forKey: "recordedPauseRanges")
+
+        let decoded = try JSONDecoder().decode(
+            WorkoutSummary.self,
+            from: JSONSerialization.data(withJSONObject: payload)
+        )
+
+        XCTAssertTrue(decoded.recordedPauseRanges.isEmpty)
     }
 
     func testVO2HistoryUsesRecentEligibleOutdoorRunWalkWorkouts() {
