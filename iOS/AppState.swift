@@ -43,6 +43,12 @@ final class AppState {
             settingsStore.saveActivityEdits(activityEdits)
         }
     }
+    private(set) var workoutMerges: [WorkoutMerge] {
+        didSet {
+            summaryRevision += 1
+            settingsStore.saveWorkoutMerges(workoutMerges)
+        }
+    }
     private(set) var excludedBestEffortWorkoutIDs: Set<UUID> {
         didSet {
             summaryRevision += 1
@@ -148,6 +154,7 @@ final class AppState {
         self.settings = settingsStore.loadSettings()
         self.intervals = settingsStore.loadIntervals()
         self.activityEdits = settingsStore.loadActivityEdits()
+        self.workoutMerges = settingsStore.loadWorkoutMerges()
         self.excludedBestEffortWorkoutIDs = settingsStore.loadExcludedBestEffortWorkoutIDs()
         self.bestEffortCache = settingsStore.loadBestEffortCache()
         self.stravaUploads = settingsStore.loadStravaUploads()
@@ -266,11 +273,17 @@ final class AppState {
     }
 
     func latestWorkout(for id: UUID) -> WorkoutSummary? {
-        workouts.first { $0.id == id }
+        if let merge = workoutMerges.first(where: { $0.id == id }) {
+            return WorkoutMerger.combined(merge.workoutIDs.compactMap { componentID in
+                workouts.first { $0.id == componentID }
+            })
+        }
+        return workouts.first { $0.id == id }
     }
 
     func isLoadingDetails(for workoutID: UUID) -> Bool {
-        healthDetailLoadingIDs.contains(workoutID)
+        let workoutIDs = mergedWorkoutIDs(for: workoutID) ?? [workoutID]
+        return workoutIDs.contains { healthDetailLoadingIDs.contains($0) }
     }
 
     var bestEffortResults: [BestEffortDistance: BestEffortResult] {
@@ -358,11 +371,54 @@ final class AppState {
     }
 
     var adjustedWorkouts: [WorkoutSummary] {
-        workouts.map(adjustedWorkout)
+        visibleWorkouts.map(adjustedWorkout)
+    }
+
+    var visibleWorkouts: [WorkoutSummary] {
+        var mergedComponentIDs = Set<UUID>()
+        var combinedWorkouts: [WorkoutSummary] = []
+
+        for merge in workoutMerges {
+            let components = merge.workoutIDs.compactMap { componentID in
+                workouts.first { $0.id == componentID }
+            }
+            guard components.count == merge.workoutIDs.count,
+                  let combined = WorkoutMerger.combined(components) else {
+                continue
+            }
+            mergedComponentIDs.formUnion(merge.workoutIDs)
+            combinedWorkouts.append(combined)
+        }
+
+        return (workouts.filter { !mergedComponentIDs.contains($0.id) } + combinedWorkouts)
+            .sorted { $0.startDate > $1.startDate }
+    }
+
+    func mergeWorkouts(ids: [UUID]) {
+        let orderedIDs = ids.compactMap { id in
+            workouts.first(where: { $0.id == id })
+        }
+        .sorted { $0.startDate < $1.startDate }
+        .map(\.id)
+        guard let merge = WorkoutMerge(workoutIDs: orderedIDs) else { return }
+
+        let mergedIDs = Set(merge.workoutIDs)
+        workoutMerges.removeAll { !Set($0.workoutIDs).isDisjoint(with: mergedIDs) }
+        workoutMerges.append(merge)
+        activityEdits.removeAll { $0.workoutID != merge.id && mergedIDs.contains($0.workoutID) }
+        stravaUploads.removeAll { $0.workoutID != merge.id && mergedIDs.contains($0.workoutID) }
+    }
+
+    func unmergeWorkout(_ workoutID: UUID) {
+        workoutMerges.removeAll { $0.id == workoutID }
+    }
+
+    func mergedWorkoutIDs(for workoutID: UUID) -> [UUID]? {
+        workoutMerges.first { $0.workoutIDs.contains(workoutID) }?.workoutIDs
     }
 
     func saveEdit(_ edit: ActivityEdit) {
-        let workout = workouts.first { $0.id == edit.workoutID }
+        let workout = latestWorkout(for: edit.workoutID)
 
         guard edit.hasAdjustments else {
             activityEdits.removeAll { $0.workoutID == edit.workoutID }
@@ -397,27 +453,44 @@ final class AppState {
     }
 
     func deleteWorkout(_ workout: WorkoutSummary) async -> Bool {
-        deletedWorkoutIDs.insert(workout.id)
-        healthDetailLoadingIDs.remove(workout.id)
-        workouts.removeAll { $0.id == workout.id }
-        activityEdits.removeAll { $0.workoutID == workout.id }
-        invalidateBestEffortCache(for: workout.id, activity: workout.activity)
-        setBestEffortInclusion(true, for: workout.id)
-        stravaUploads.removeAll { $0.workoutID == workout.id }
+        let targetIDs = mergedWorkoutIDs(for: workout.id) ?? [workout.id]
+        let targetWorkouts = targetIDs.compactMap { targetID in
+            workouts.first { $0.id == targetID } ?? (targetID == workout.id ? workout : nil)
+        }
+        let healthKitTargets = targetWorkouts.filter { $0.source == .healthKit }
 
-        guard workout.source == .healthKit else {
+        for targetID in targetIDs {
+            let activity = workouts.first { $0.id == targetID }?.activity ?? workout.activity
+            deletedWorkoutIDs.insert(targetID)
+            healthDetailLoadingIDs.remove(targetID)
+            activityEdits.removeAll { $0.workoutID == targetID }
+            invalidateBestEffortCache(for: targetID, activity: activity)
+            setBestEffortInclusion(true, for: targetID)
+            stravaUploads.removeAll { $0.workoutID == targetID }
+        }
+        workouts.removeAll { targetIDs.contains($0.id) }
+        workoutMerges.removeAll { merge in
+            !Set(merge.workoutIDs).isDisjoint(with: Set(targetIDs))
+        }
+
+        guard !healthKitTargets.isEmpty else {
             authorizationMessage = nil
             return true
         }
 
         do {
             try await healthKit.requestAuthorization()
-            do {
-                try await healthKit.deleteWorkout(id: workout.id)
-                authorizationMessage = nil
-            } catch {
-                authorizationMessage = "Removed from Tracker. Apple Health did not delete it: \(error.localizedDescription)"
+            var deletionErrors: [String] = []
+            for target in healthKitTargets {
+                do {
+                    try await healthKit.deleteWorkout(id: target.id)
+                } catch {
+                    deletionErrors.append(error.localizedDescription)
+                }
             }
+            authorizationMessage = deletionErrors.isEmpty
+                ? nil
+                : "Removed from Tracker. Apple Health did not delete every workout: \(deletionErrors.joined(separator: "; "))"
         } catch {
             authorizationMessage = "Removed from Tracker. Apple Health was not updated: \(error.localizedDescription)"
         }
@@ -527,7 +600,7 @@ final class AppState {
 
     private func enqueueAutoUploadsIfNeeded() {
         guard settings.stravaAutoUpload else { return }
-        for workout in workouts where workout.source == .healthKit && stravaRecord(for: workout.id) == nil {
+        for workout in visibleWorkouts where workout.source == .healthKit && stravaRecord(for: workout.id) == nil {
             upsertStravaRecord(StravaUploadRecord(workoutID: workout.id, status: .pending))
         }
     }
@@ -545,7 +618,7 @@ final class AppState {
 
         let pending = stravaUploads.filter { $0.status == .pending || $0.status == .failed || $0.status == .uploading || $0.status == .processing }
         for record in pending {
-            guard let workout = workouts.first(where: { $0.id == record.workoutID }) else { continue }
+            guard let workout = latestWorkout(for: record.workoutID) else { continue }
             guard workout.source == .healthKit else {
                 upsertStravaRecord(StravaUploadRecord(workoutID: workout.id, status: .failed, lastError: "Only Apple Health workouts are uploaded to Strava."))
                 continue

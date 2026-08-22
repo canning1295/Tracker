@@ -413,6 +413,21 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(store.loadDeletedWorkoutIDs(), deletedIDs)
     }
 
+    func testSettingsStoreRoundTripsWorkoutMerges() throws {
+        let suiteName = "TrackerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let store = SettingsStore(defaults: defaults)
+        XCTAssertEqual(store.loadWorkoutMerges(), [])
+
+        let merge = try XCTUnwrap(WorkoutMerge(workoutIDs: [UUID(), UUID()]))
+        store.saveWorkoutMerges([merge])
+        XCTAssertEqual(store.loadWorkoutMerges(), [merge])
+    }
+
     func testSettingsStoreRoundTripsBestEffortExclusions() throws {
         let suiteName = "TrackerTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
@@ -915,6 +930,68 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(adjusted.duration, 110)
         XCTAssertEqual(adjusted.endDate, start.addingTimeInterval(110))
         XCTAssertTrue(adjusted.recordedPauseRanges.isEmpty)
+    }
+
+    func testWorkoutMergerCombinesMetricsSamplesAndGapAsPause() throws {
+        let start = Date(timeIntervalSince1970: 2_400)
+        let first = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(600),
+            duration: 540,
+            distanceMeters: 1_600,
+            activeEnergyKilocalories: 120,
+            averageHeartRate: 120,
+            maxHeartRate: 150,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: 1_600, seconds: 600, start: start)
+            ],
+            heartRateSamples: [HeartRateSample(timestamp: start.addingTimeInterval(300), beatsPerMinute: 120)],
+            recordedPauseRanges: [
+                DateRangeValue(start: start.addingTimeInterval(200), end: start.addingTimeInterval(260))
+            ]
+        )
+        let secondStart = start.addingTimeInterval(608)
+        let second = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: secondStart,
+            endDate: secondStart.addingTimeInterval(600),
+            duration: 600,
+            distanceMeters: 1_700,
+            activeEnergyKilocalories: 130,
+            averageHeartRate: 140,
+            maxHeartRate: 160,
+            route: [
+                routePoint(distanceMeters: 1_600, seconds: 0, start: secondStart),
+                routePoint(distanceMeters: 3_300, seconds: 600, start: secondStart)
+            ],
+            heartRateSamples: [HeartRateSample(timestamp: secondStart.addingTimeInterval(300), beatsPerMinute: 140)]
+        )
+
+        let combined = try XCTUnwrap(WorkoutMerger.combined([second, first]))
+
+        XCTAssertEqual(combined.id, first.id)
+        XCTAssertEqual(combined.startDate, first.startDate)
+        XCTAssertEqual(combined.endDate, second.endDate)
+        XCTAssertEqual(combined.duration, 1_140)
+        XCTAssertEqual(combined.distanceMeters, 3_300)
+        XCTAssertEqual(combined.activeEnergyKilocalories, 250)
+        XCTAssertEqual(combined.averageHeartRate, 131)
+        XCTAssertEqual(combined.maxHeartRate, 160)
+        XCTAssertEqual(combined.route.count, 4)
+        XCTAssertEqual(combined.heartRateSamples.map(\.beatsPerMinute), [120, 140])
+        XCTAssertEqual(combined.recordedPauseRanges.count, 2)
+        XCTAssertTrue(combined.recordedPauseRanges.contains {
+            $0.start == first.endDate && $0.end == second.startDate
+        })
+    }
+
+    func testWorkoutMergeRequiresTwoUniqueWorkoutIDs() {
+        let workoutID = UUID()
+        XCTAssertNil(WorkoutMerge(workoutIDs: [workoutID]))
+        XCTAssertNil(WorkoutMerge(workoutIDs: [workoutID, workoutID]))
+        XCTAssertNotNil(WorkoutMerge(workoutIDs: [workoutID, UUID()]))
     }
 
     func testSplitBuilderBuildsRouteBasedMileSplits() {

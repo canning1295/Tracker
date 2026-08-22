@@ -426,7 +426,7 @@ struct SummaryView: View {
         guard !Task.isCancelled else { return }
 
         let input = SummaryComputationInput(
-            workouts: appState.workouts,
+            workouts: appState.visibleWorkouts,
             activityEdits: appState.activityEdits,
             heartRateSettings: appState.settings.heartRate,
             userMetrics: appState.settings.userMetrics,

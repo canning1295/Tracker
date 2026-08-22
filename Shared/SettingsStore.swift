@@ -5,6 +5,7 @@ struct SettingsStore {
     private let settingsKey = "workout.settings.v1"
     private let intervalsKey = "workout.intervals.v1"
     private let activityEditsKey = "workout.activityEdits.v1"
+    private let workoutMergesKey = "workout.merges.v1"
     private let stravaUploadsKey = "workout.stravaUploads.v1"
     private let deletedWorkoutIDsKey = "workout.deletedWorkoutIDs.v1"
     private let excludedBestEffortWorkoutIDsKey = "workout.excludedBestEffortWorkoutIDs.v1"
@@ -42,6 +43,16 @@ struct SettingsStore {
     func saveActivityEdits(_ edits: [ActivityEdit]) {
         guard let data = try? JSONEncoder().encode(edits) else { return }
         defaults.set(data, forKey: activityEditsKey)
+    }
+
+    func loadWorkoutMerges() -> [WorkoutMerge] {
+        guard let data = defaults.data(forKey: workoutMergesKey) else { return [] }
+        return (try? JSONDecoder().decode([WorkoutMerge].self, from: data)) ?? []
+    }
+
+    func saveWorkoutMerges(_ merges: [WorkoutMerge]) {
+        guard let data = try? JSONEncoder().encode(merges) else { return }
+        defaults.set(data, forKey: workoutMergesKey)
     }
 
     func loadStravaUploads() -> [StravaUploadRecord] {

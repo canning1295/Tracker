@@ -673,6 +673,48 @@ enum WorkoutTimeline {
     }
 }
 
+enum WorkoutMerger {
+    static func combined(_ workouts: [WorkoutSummary]) -> WorkoutSummary? {
+        let sorted = workouts.sorted { $0.startDate < $1.startDate }
+        guard let first = sorted.first else { return nil }
+
+        let componentIDs = Set(sorted.map(\.id))
+        guard componentIDs.count == sorted.count else { return nil }
+
+        let totalDuration = sorted.reduce(0) { $0 + max(0, $1.duration) }
+        let weightedHeartRate = sorted.reduce(into: (total: 0.0, seconds: 0.0)) { partial, workout in
+            guard let averageHeartRate = workout.averageHeartRate, workout.duration > 0 else { return }
+            partial.total += Double(averageHeartRate) * workout.duration
+            partial.seconds += workout.duration
+        }
+        let averageHeartRate = weightedHeartRate.seconds > 0
+            ? Int((weightedHeartRate.total / weightedHeartRate.seconds).rounded())
+            : nil
+
+        var pauseRanges = sorted.flatMap(\.recordedPauseRanges)
+        for pair in zip(sorted, sorted.dropFirst()) where pair.1.startDate > pair.0.endDate {
+            pauseRanges.append(DateRangeValue(start: pair.0.endDate, end: pair.1.startDate))
+        }
+
+        return WorkoutSummary(
+            id: first.id,
+            source: first.source,
+            activity: first.activity,
+            startDate: first.startDate,
+            endDate: sorted.map(\.endDate).max() ?? first.endDate,
+            duration: totalDuration,
+            distanceMeters: sorted.reduce(0) { $0 + max(0, $1.distanceMeters) },
+            activeEnergyKilocalories: sorted.reduce(0) { $0 + max(0, $1.activeEnergyKilocalories) },
+            averageHeartRate: averageHeartRate,
+            maxHeartRate: sorted.compactMap(\.maxHeartRate).max(),
+            route: sorted.flatMap(\.route).sorted { $0.timestamp < $1.timestamp },
+            heartRateSamples: sorted.flatMap(\.heartRateSamples).sorted { $0.timestamp < $1.timestamp },
+            recordedPauseRanges: WorkoutTimeline.mergedPauseRanges(pauseRanges),
+            stravaState: first.stravaState
+        )
+    }
+}
+
 enum SplitBuilder {
     static func splits(for workout: WorkoutSummary, unit: DistanceUnit) -> [SplitSummary] {
         guard workout.activity.recordsDistance else { return [] }

@@ -722,6 +722,19 @@ struct ActivityEdit: Codable, Hashable, Identifiable {
     }
 }
 
+struct WorkoutMerge: Codable, Hashable, Identifiable {
+    var id: UUID
+    var workoutIDs: [UUID]
+
+    init?(workoutIDs: [UUID]) {
+        var seen = Set<UUID>()
+        let uniqueIDs = workoutIDs.filter { seen.insert($0).inserted }
+        guard uniqueIDs.count >= 2 else { return nil }
+        self.id = uniqueIDs[0]
+        self.workoutIDs = uniqueIDs
+    }
+}
+
 struct RoutePoint: Codable, Hashable {
     var latitude: Double
     var longitude: Double

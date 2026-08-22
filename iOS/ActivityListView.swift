@@ -34,7 +34,7 @@ struct ActivityListView: View {
                 StartWorkoutSheet()
             }
             .overlay {
-                if appState.isLoadingWorkouts, !appState.workouts.isEmpty {
+                if appState.isLoadingWorkouts, !appState.visibleWorkouts.isEmpty {
                     ProgressView()
                         .padding()
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -43,7 +43,7 @@ struct ActivityListView: View {
             .task {
                 await appState.refreshHealthData()
             }
-            .onChange(of: appState.workouts.map(\.id)) { _, visibleWorkoutIDs in
+            .onChange(of: appState.visibleWorkouts.map(\.id)) { _, visibleWorkoutIDs in
                 let visibleWorkoutIDs = Set(visibleWorkoutIDs)
                 activityPath.removeAll { !visibleWorkoutIDs.contains($0.id) }
             }
@@ -51,7 +51,7 @@ struct ActivityListView: View {
 
     @ViewBuilder
     private var content: some View {
-        if appState.isLoadingWorkouts, appState.workouts.isEmpty {
+        if appState.isLoadingWorkouts, appState.visibleWorkouts.isEmpty {
             HumorousLoadingView(
                 title: "Loading Health data",
                 phrases: LoadingPhraseProvider.healthImportPhrases
@@ -71,14 +71,14 @@ struct ActivityListView: View {
             }
 
             Section {
-                if appState.workouts.isEmpty {
+                if appState.visibleWorkouts.isEmpty {
                     ContentUnavailableView(
                         "No Activities",
                         systemImage: "figure.run",
                         description: Text("Supported Apple Health workouts will appear here.")
                     )
                 } else {
-                    ForEach(appState.workouts) { workout in
+                    ForEach(appState.visibleWorkouts) { workout in
                         let displayWorkout = appState.adjustedWorkout(workout)
                         NavigationLink(value: workout) {
                             ActivityRow(workout: displayWorkout, unit: appState.settings.distanceUnit, stravaStatus: appState.stravaStatus(for: workout.id))

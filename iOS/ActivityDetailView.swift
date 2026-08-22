@@ -60,6 +60,19 @@ struct ActivityDetailView: View {
                 }
             }
 
+            if let mergedWorkoutIDs = appState.mergedWorkoutIDs(for: currentWorkout.id) {
+                Section("Combined Activity") {
+                    LabeledContent("Activities") {
+                        Text("\(mergedWorkoutIDs.count)")
+                    }
+                    Button {
+                        appState.unmergeWorkout(currentWorkout.id)
+                    } label: {
+                        Label("Separate Activities", systemImage: "rectangle.split.2x1")
+                    }
+                }
+            }
+
             if !displayWorkout.route.isEmpty {
                 Section("Route") {
                     RouteMapView(
@@ -186,7 +199,7 @@ struct ActivityDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(currentWorkout.source == .healthKit ? "This removes the activity from Tracker and asks Apple Health to delete the workout." : "This removes the activity from Tracker.")
+            Text(deleteConfirmationMessage(for: currentWorkout))
         }
         .alert("Could Not Delete Activity", isPresented: Binding(
             get: { deleteError != nil },
@@ -219,6 +232,15 @@ struct ActivityDetailView: View {
         } else {
             deleteError = appState.authorizationMessage ?? "The activity was not deleted."
         }
+    }
+
+    private func deleteConfirmationMessage(for workout: WorkoutSummary) -> String {
+        if let mergedWorkoutIDs = appState.mergedWorkoutIDs(for: workout.id) {
+            return "This removes all \(mergedWorkoutIDs.count) combined activities from Tracker and asks Apple Health to delete the workouts."
+        }
+        return workout.source == .healthKit
+            ? "This removes the activity from Tracker and asks Apple Health to delete the workout."
+            : "This removes the activity from Tracker."
     }
 
     private func metricGrid(workout: WorkoutSummary) -> some View {
