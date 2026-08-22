@@ -427,6 +427,203 @@ struct SplitSummary: Equatable {
     var paceSecondsPerUnit: Double?
 }
 
+enum WorkoutEndTrimReason: Equatable {
+    case stoppedMoving
+    case vehicleMovement
+}
+
+struct WorkoutEndTrimSuggestion: Equatable {
+    var cutoffDate: Date
+    var trimEndSeconds: TimeInterval
+    var retainedDistanceMeters: Double
+    var reason: WorkoutEndTrimReason
+}
+
+enum WorkoutEndAnomalyDetector {
+    private struct Sample {
+        var point: RoutePoint
+        var cumulativeDistanceMeters: Double
+    }
+
+    private static let minimumRetainedDuration: TimeInterval = 5 * 60
+    private static let minimumStationaryTailDuration: TimeInterval = 90
+    private static let maximumStationaryAverageSpeed = 0.65
+    private static let maximumFinalMinuteSpeed = 0.55
+    private static let maximumInitialSlowSpeed = 1.0
+    private static let vehicleWindowDuration: TimeInterval = 30
+    private static let minimumVehicleAverageSpeed = 8.0
+    private static let minimumVehicleSegmentSpeed = 6.0
+    private static let maximumVehicleSegmentSpeed = 55.0
+    private static let minimumSlowTransitionDuration: TimeInterval = 30
+    private static let maximumSlowTransitionDuration: TimeInterval = 5 * 60
+    private static let maximumSlowTransitionSpeed = 1.25
+
+    static func suggestion(
+        route: [RoutePoint],
+        workoutEnd: Date
+    ) -> WorkoutEndTrimSuggestion? {
+        let samples = routeSamples(route)
+        guard samples.count >= 2,
+              let first = samples.first,
+              let last = samples.last else {
+            return nil
+        }
+
+        let resolvedEnd = max(workoutEnd, last.point.timestamp)
+        if let vehicle = vehicleSuggestion(samples: samples, firstDate: first.point.timestamp, workoutEnd: resolvedEnd) {
+            return vehicle
+        }
+        return stationarySuggestion(samples: samples, firstDate: first.point.timestamp, workoutEnd: resolvedEnd)
+    }
+
+    private static func routeSamples(_ route: [RoutePoint]) -> [Sample] {
+        let points = route
+            .filter { point in
+                guard let accuracy = point.horizontalAccuracy else { return true }
+                return accuracy >= 0 && accuracy <= 50
+            }
+            .sorted { $0.timestamp < $1.timestamp }
+
+        guard let first = points.first else { return [] }
+        var samples = [Sample(point: first, cumulativeDistanceMeters: 0)]
+        var previous = first
+        var cumulativeDistance = 0.0
+
+        for point in points.dropFirst() where point.timestamp > previous.timestamp {
+            cumulativeDistance += PaceCalculator.distanceMeters(between: previous, and: point)
+            samples.append(Sample(point: point, cumulativeDistanceMeters: cumulativeDistance))
+            previous = point
+        }
+        return samples
+    }
+
+    private static func vehicleSuggestion(
+        samples: [Sample],
+        firstDate: Date,
+        workoutEnd: Date
+    ) -> WorkoutEndTrimSuggestion? {
+        guard let last = samples.last else { return nil }
+        let latestFastStart = last.point.timestamp.addingTimeInterval(-vehicleWindowDuration)
+
+        for fastStartIndex in samples.indices where samples[fastStartIndex].point.timestamp <= latestFastStart {
+            let fastStart = samples[fastStartIndex]
+            guard fastStart.point.timestamp.timeIntervalSince(firstDate) >= minimumRetainedDuration,
+                  let fastEndIndex = samples[fastStartIndex...].firstIndex(where: {
+                      $0.point.timestamp.timeIntervalSince(fastStart.point.timestamp) >= vehicleWindowDuration
+                  }),
+                  isVehicleWindow(samples: samples, startIndex: fastStartIndex, endIndex: fastEndIndex) else {
+                continue
+            }
+
+            let earliestSlowStart = fastStart.point.timestamp.addingTimeInterval(-maximumSlowTransitionDuration)
+            for slowStartIndex in samples.indices where slowStartIndex < fastStartIndex {
+                let slowStart = samples[slowStartIndex]
+                guard slowStart.point.timestamp >= earliestSlowStart else { continue }
+                let slowDuration = fastStart.point.timestamp.timeIntervalSince(slowStart.point.timestamp)
+                guard slowDuration >= minimumSlowTransitionDuration,
+                      slowDuration <= maximumSlowTransitionDuration else {
+                    continue
+                }
+                let slowDistance = fastStart.cumulativeDistanceMeters - slowStart.cumulativeDistanceMeters
+                guard let initialSlowEndIndex = samples[slowStartIndex..<fastStartIndex].firstIndex(where: {
+                    $0.point.timestamp.timeIntervalSince(slowStart.point.timestamp) >= 30
+                }) else {
+                    continue
+                }
+                let initialSlowEnd = samples[initialSlowEndIndex]
+                let initialSlowDuration = initialSlowEnd.point.timestamp.timeIntervalSince(slowStart.point.timestamp)
+                let initialSlowDistance = initialSlowEnd.cumulativeDistanceMeters - slowStart.cumulativeDistanceMeters
+                guard initialSlowDistance / initialSlowDuration <= maximumInitialSlowSpeed,
+                      slowDistance / slowDuration <= maximumSlowTransitionSpeed else {
+                    continue
+                }
+
+                return WorkoutEndTrimSuggestion(
+                    cutoffDate: slowStart.point.timestamp,
+                    trimEndSeconds: workoutEnd.timeIntervalSince(slowStart.point.timestamp),
+                    retainedDistanceMeters: slowStart.cumulativeDistanceMeters,
+                    reason: .vehicleMovement
+                )
+            }
+        }
+        return nil
+    }
+
+    private static func isVehicleWindow(
+        samples: [Sample],
+        startIndex: Int,
+        endIndex: Int
+    ) -> Bool {
+        let start = samples[startIndex]
+        let end = samples[endIndex]
+        let duration = end.point.timestamp.timeIntervalSince(start.point.timestamp)
+        guard duration > 0 else { return false }
+        let averageSpeed = (end.cumulativeDistanceMeters - start.cumulativeDistanceMeters) / duration
+        guard averageSpeed >= minimumVehicleAverageSpeed else { return false }
+
+        let speeds = (startIndex..<endIndex).compactMap { index -> Double? in
+            let nextIndex = index + 1
+            let seconds = samples[nextIndex].point.timestamp.timeIntervalSince(samples[index].point.timestamp)
+            guard seconds > 0 else { return nil }
+            return (samples[nextIndex].cumulativeDistanceMeters - samples[index].cumulativeDistanceMeters) / seconds
+        }
+        guard speeds.count >= 3,
+              speeds.allSatisfy({ $0 <= maximumVehicleSegmentSpeed }) else {
+            return false
+        }
+        let vehicleSegments = speeds.filter { $0 >= minimumVehicleSegmentSpeed }.count
+        return Double(vehicleSegments) / Double(speeds.count) >= 0.6
+    }
+
+    private static func stationarySuggestion(
+        samples: [Sample],
+        firstDate: Date,
+        workoutEnd: Date
+    ) -> WorkoutEndTrimSuggestion? {
+        guard let last = samples.last else { return nil }
+        let finalMinuteStart = last.point.timestamp.addingTimeInterval(-60)
+        guard let finalMinuteSample = samples.last(where: { $0.point.timestamp <= finalMinuteStart }) else {
+            return nil
+        }
+        let finalMinuteDuration = last.point.timestamp.timeIntervalSince(finalMinuteSample.point.timestamp)
+        let finalMinuteDistance = last.cumulativeDistanceMeters - finalMinuteSample.cumulativeDistanceMeters
+        guard finalMinuteDuration > 0,
+              finalMinuteDistance / finalMinuteDuration <= maximumFinalMinuteSpeed else {
+            return nil
+        }
+
+        for sampleIndex in samples.indices {
+            let sample = samples[sampleIndex]
+            let retainedDuration = sample.point.timestamp.timeIntervalSince(firstDate)
+            let tailDuration = last.point.timestamp.timeIntervalSince(sample.point.timestamp)
+            guard retainedDuration >= minimumRetainedDuration,
+                  tailDuration >= minimumStationaryTailDuration,
+                  let initialSlowSample = samples[sampleIndex...].first(where: {
+                      $0.point.timestamp.timeIntervalSince(sample.point.timestamp) >= 30
+                  }) else {
+                continue
+            }
+            let initialSlowDuration = initialSlowSample.point.timestamp.timeIntervalSince(sample.point.timestamp)
+            let initialSlowDistance = initialSlowSample.cumulativeDistanceMeters - sample.cumulativeDistanceMeters
+            let tailDistance = last.cumulativeDistanceMeters - sample.cumulativeDistanceMeters
+            let displacement = PaceCalculator.distanceMeters(between: sample.point, and: last.point)
+            guard initialSlowDistance / initialSlowDuration <= maximumInitialSlowSpeed,
+                  tailDistance / tailDuration <= maximumStationaryAverageSpeed,
+                  displacement <= max(50, tailDuration * maximumFinalMinuteSpeed) else {
+                continue
+            }
+
+            return WorkoutEndTrimSuggestion(
+                cutoffDate: sample.point.timestamp,
+                trimEndSeconds: workoutEnd.timeIntervalSince(sample.point.timestamp),
+                retainedDistanceMeters: sample.cumulativeDistanceMeters,
+                reason: .stoppedMoving
+            )
+        }
+        return nil
+    }
+}
+
 enum WorkoutTimeline {
     static func mergedPauseRanges(_ ranges: [DateRangeValue]) -> [DateRangeValue] {
         let sorted = ranges

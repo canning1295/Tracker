@@ -546,7 +546,8 @@ final class WorkoutCoreTests: XCTestCase {
             id: UUID(),
             workoutID: UUID(),
             activity: .outdoorRun,
-            endedAt: Date(timeIntervalSince1970: 1_750_000_000)
+            endedAt: Date(timeIntervalSince1970: 1_750_000_000),
+            trimEndSeconds: 125
         )
 
         XCTAssertEqual(WatchWorkoutCompletion(payload: completion.payload), completion)
@@ -554,6 +555,87 @@ final class WorkoutCoreTests: XCTestCase {
         var legacyPayload = completion.payload
         legacyPayload.removeValue(forKey: WatchConnectivityPayloadKey.completionID)
         XCTAssertEqual(WatchWorkoutCompletion(payload: legacyPayload)?.id, completion.workoutID)
+
+        legacyPayload.removeValue(forKey: WatchConnectivityPayloadKey.trimEndSeconds)
+        XCTAssertEqual(WatchWorkoutCompletion(payload: legacyPayload)?.trimEndSeconds, 0)
+
+        let encoded = try JSONEncoder().encode(completion)
+        var legacyJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        legacyJSON.removeValue(forKey: "trimEndSeconds")
+        let decoded = try JSONDecoder().decode(
+            WatchWorkoutCompletion.self,
+            from: JSONSerialization.data(withJSONObject: legacyJSON)
+        )
+        XCTAssertEqual(decoded.trimEndSeconds, 0)
+    }
+
+    func testWorkoutEndDetectorSuggestsStationaryTailTrim() throws {
+        let start = Date(timeIntervalSince1970: 1_760_000_000)
+        var route: [RoutePoint] = stride(from: 0, through: 600, by: 10).map { seconds in
+            routePoint(distanceMeters: Double(seconds) * 3, seconds: Double(seconds), start: start)
+        }
+        route.append(contentsOf: stride(from: 610, through: 720, by: 10).map { seconds in
+            routePoint(distanceMeters: 1_800 + Double(seconds - 600) * 0.1, seconds: Double(seconds), start: start)
+        })
+
+        let suggestion = try XCTUnwrap(WorkoutEndAnomalyDetector.suggestion(
+            route: route,
+            workoutEnd: start.addingTimeInterval(720)
+        ))
+
+        XCTAssertEqual(suggestion.reason, .stoppedMoving)
+        XCTAssertEqual(suggestion.trimEndSeconds, 120, accuracy: 0.01)
+        XCTAssertEqual(suggestion.retainedDistanceMeters, 1_800, accuracy: 1)
+    }
+
+    func testWorkoutEndDetectorSuggestsSlowThenDrivingTailTrim() throws {
+        let start = Date(timeIntervalSince1970: 1_770_000_000)
+        var route: [RoutePoint] = stride(from: 0, through: 600, by: 10).map { seconds in
+            routePoint(distanceMeters: Double(seconds) * 3, seconds: Double(seconds), start: start)
+        }
+        route.append(contentsOf: stride(from: 610, through: 660, by: 10).map { seconds in
+            routePoint(distanceMeters: 1_800 + Double(seconds - 600) * 0.2, seconds: Double(seconds), start: start)
+        })
+        route.append(contentsOf: stride(from: 670, through: 720, by: 10).map { seconds in
+            routePoint(distanceMeters: 1_812 + Double(seconds - 660) * 10, seconds: Double(seconds), start: start)
+        })
+
+        let suggestion = try XCTUnwrap(WorkoutEndAnomalyDetector.suggestion(
+            route: route,
+            workoutEnd: start.addingTimeInterval(720)
+        ))
+
+        XCTAssertEqual(suggestion.reason, .vehicleMovement)
+        XCTAssertEqual(suggestion.trimEndSeconds, 120, accuracy: 0.01)
+        XCTAssertEqual(suggestion.retainedDistanceMeters, 1_800, accuracy: 1)
+    }
+
+    func testWorkoutEndDetectorKeepsNormalRunningFinish() {
+        let start = Date(timeIntervalSince1970: 1_780_000_000)
+        let route = stride(from: 0, through: 720, by: 10).map { seconds in
+            routePoint(distanceMeters: Double(seconds) * 3, seconds: Double(seconds), start: start)
+        }
+
+        XCTAssertNil(WorkoutEndAnomalyDetector.suggestion(
+            route: route,
+            workoutEnd: start.addingTimeInterval(720)
+        ))
+    }
+
+    func testWorkoutEndDetectorDoesNotTreatSingleGPSJumpAsDriving() {
+        let start = Date(timeIntervalSince1970: 1_790_000_000)
+        var route: [RoutePoint] = stride(from: 0, through: 600, by: 10).map { seconds in
+            routePoint(distanceMeters: Double(seconds) * 3, seconds: Double(seconds), start: start)
+        }
+        route.append(routePoint(distanceMeters: 1_800, seconds: 630, start: start))
+        route.append(routePoint(distanceMeters: 2_300, seconds: 640, start: start))
+        route.append(routePoint(distanceMeters: 2_300, seconds: 650, start: start))
+        route.append(routePoint(distanceMeters: 2_300, seconds: 660, start: start))
+
+        XCTAssertNil(WorkoutEndAnomalyDetector.suggestion(
+            route: route,
+            workoutEnd: start.addingTimeInterval(660)
+        ))
     }
 
     func testSettingsWriterUpdatesTouchControlsAndPostsNotification() throws {

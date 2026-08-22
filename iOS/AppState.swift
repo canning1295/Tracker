@@ -497,6 +497,14 @@ final class AppState {
     }
 
     func handleWatchWorkoutFinished(_ completion: WatchWorkoutCompletion) {
+        if completion.trimEndSeconds > 0 {
+            var watchEdit = edit(for: completion.workoutID)
+            if watchEdit.trimEndSeconds == 0 {
+                watchEdit.trimEndSeconds = completion.trimEndSeconds
+                saveEdit(watchEdit)
+            }
+        }
+
         guard watchWorkoutRefreshTasks[completion.workoutID] == nil else { return }
 
         watchWorkoutRefreshTasks[completion.workoutID] = Task { @MainActor [weak self] in
@@ -720,6 +728,7 @@ final class AppState {
                 maxHeartRate: existing.maxHeartRate,
                 route: existing.route,
                 heartRateSamples: existing.heartRateSamples,
+                recordedPauseRanges: existing.recordedPauseRanges,
                 stravaState: metadata.stravaState
             )
         }

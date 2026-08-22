@@ -830,6 +830,7 @@ enum WatchConnectivityPayloadKey {
     static let workoutID = "workoutID"
     static let activity = "activity"
     static let endedAt = "endedAt"
+    static let trimEndSeconds = "trimEndSeconds"
 }
 
 struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
@@ -837,17 +838,20 @@ struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
     var workoutID: UUID
     var activity: WorkoutActivity?
     var endedAt: Date
+    var trimEndSeconds: TimeInterval
 
     init(
         id: UUID = UUID(),
         workoutID: UUID,
         activity: WorkoutActivity?,
-        endedAt: Date
+        endedAt: Date,
+        trimEndSeconds: TimeInterval = 0
     ) {
         self.id = id
         self.workoutID = workoutID
         self.activity = activity
         self.endedAt = endedAt
+        self.trimEndSeconds = max(0, trimEndSeconds)
     }
 
     init?(payload: [String: Any]) {
@@ -862,7 +866,14 @@ struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
             .flatMap(UUID.init(uuidString:)) ?? workoutID
         let activity = (payload[WatchConnectivityPayloadKey.activity] as? String)
             .flatMap(WorkoutActivity.init(rawValue:))
-        self.init(id: completionID, workoutID: workoutID, activity: activity, endedAt: endedAt)
+        let trimEndSeconds = payload[WatchConnectivityPayloadKey.trimEndSeconds] as? TimeInterval ?? 0
+        self.init(
+            id: completionID,
+            workoutID: workoutID,
+            activity: activity,
+            endedAt: endedAt,
+            trimEndSeconds: trimEndSeconds
+        )
     }
 
     var payload: [String: Any] {
@@ -871,8 +882,26 @@ struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
             WatchConnectivityPayloadKey.completionID: id.uuidString,
             WatchConnectivityPayloadKey.workoutID: workoutID.uuidString,
             WatchConnectivityPayloadKey.activity: activity?.rawValue ?? "",
-            WatchConnectivityPayloadKey.endedAt: endedAt
+            WatchConnectivityPayloadKey.endedAt: endedAt,
+            WatchConnectivityPayloadKey.trimEndSeconds: trimEndSeconds
         ]
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case workoutID
+        case activity
+        case endedAt
+        case trimEndSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        workoutID = try container.decode(UUID.self, forKey: .workoutID)
+        activity = try container.decodeIfPresent(WorkoutActivity.self, forKey: .activity)
+        endedAt = try container.decode(Date.self, forKey: .endedAt)
+        trimEndSeconds = max(0, try container.decodeIfPresent(TimeInterval.self, forKey: .trimEndSeconds) ?? 0)
     }
 }
 

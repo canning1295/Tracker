@@ -1,14 +1,25 @@
 import MapKit
 import SwiftUI
+import WatchKit
+
+private enum WorkoutEndPrompt: Equatable {
+    case confirmation
+    case trim(WorkoutEndTrimSuggestion)
+}
 
 struct ActiveWorkoutView: View {
     @EnvironmentObject private var workoutManager: WorkoutSessionManager
     @EnvironmentObject private var watchState: WatchAppState
     @State private var page = 0
+    @State private var endPrompt: WorkoutEndPrompt?
+    @State private var resumesAfterEndCancel = false
 
     var body: some View {
         ZStack {
             TabView(selection: $page) {
+                NowPlayingView()
+                    .tag(-1)
+
                 WatchMetricsPage(
                     activity: workoutManager.activity,
                     snapshot: workoutManager.snapshot,
@@ -24,7 +35,10 @@ struct ActiveWorkoutView: View {
                         .tag(1)
                 }
 
-                WatchControlsPage()
+                WatchControlsPage(
+                    onPauseResume: togglePause,
+                    onRequestEnd: requestEndConfirmation
+                )
                     .tag(controlsTag)
             }
             .allowsHitTesting(watchState.settings.touchControlsEnabled)
@@ -32,6 +46,28 @@ struct ActiveWorkoutView: View {
             if !watchState.settings.touchControlsEnabled {
                 TouchControlsLockedOverlay()
                     .allowsHitTesting(false)
+            }
+
+            if let endPrompt {
+                switch endPrompt {
+                case .confirmation:
+                    WatchEndConfirmationView(
+                        onCancel: cancelEndConfirmation,
+                        onEnd: confirmEnd
+                    )
+                case .trim(let suggestion):
+                    WatchEndTrimPromptView(
+                        suggestion: suggestion,
+                        onKeepAll: {
+                            self.endPrompt = nil
+                            workoutManager.finishEnd()
+                        },
+                        onTrim: {
+                            self.endPrompt = nil
+                            workoutManager.finishEnd(trimSuggestion: suggestion)
+                        }
+                    )
+                }
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .always))
@@ -49,6 +85,39 @@ struct ActiveWorkoutView: View {
 
     private var controlsTag: Int {
         hasOutdoorMap ? 2 : 1
+    }
+
+    private func togglePause() {
+        let isResuming = workoutManager.isPaused
+        workoutManager.togglePause()
+        if isResuming {
+            page = 0
+        }
+    }
+
+    private func confirmEnd() {
+        resumesAfterEndCancel = false
+        if let suggestion = workoutManager.prepareToEnd() {
+            endPrompt = .trim(suggestion)
+            WKInterfaceDevice.current().play(.notification)
+        } else {
+            endPrompt = nil
+            workoutManager.finishEnd()
+        }
+    }
+
+    private func requestEndConfirmation() {
+        resumesAfterEndCancel = workoutManager.beginEndConfirmation()
+        endPrompt = .confirmation
+    }
+
+    private func cancelEndConfirmation() {
+        endPrompt = nil
+        workoutManager.cancelEndConfirmation(resumeWorkout: resumesAfterEndCancel)
+        if resumesAfterEndCancel {
+            page = 0
+        }
+        resumesAfterEndCancel = false
     }
 }
 
@@ -461,6 +530,8 @@ private extension HeartRateDisplayPresentation {
 struct WatchControlsPage: View {
     @EnvironmentObject private var workoutManager: WorkoutSessionManager
     @EnvironmentObject private var watchState: WatchAppState
+    let onPauseResume: () -> Void
+    let onRequestEnd: () -> Void
 
     var body: some View {
         let controls = WorkoutControlPresentation(
@@ -470,14 +541,14 @@ struct WatchControlsPage: View {
 
         VStack(spacing: 8) {
             Button {
-                workoutManager.togglePause()
+                onPauseResume()
             } label: {
                 Label(controls.pauseTitle, systemImage: controls.pauseSystemImage)
             }
             .disabled(!controls.isPauseEnabled)
 
             Button(role: .destructive) {
-                workoutManager.end()
+                onRequestEnd()
             } label: {
                 Label(controls.endTitle, systemImage: controls.endSystemImage)
             }
@@ -498,5 +569,91 @@ struct WatchControlsPage: View {
 
     private var touchSystemImage: String {
         watchState.settings.touchControlsEnabled ? "hand.raised.slash" : "hand.tap"
+    }
+}
+
+private struct WatchEndConfirmationView: View {
+    let onCancel: () -> Void
+    let onEnd: () -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                Button(action: onCancel) {
+                    Label("Cancel", systemImage: "xmark")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(height: proxy.size.height / 2)
+                .background(Color.gray.opacity(0.28))
+
+                Button(role: .destructive, action: onEnd) {
+                    Label("End", systemImage: "stop.fill")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(height: proxy.size.height / 2)
+                .background(Color.red.opacity(0.82))
+            }
+        }
+        .background(Color.black)
+        .ignoresSafeArea()
+        .accessibilityAddTraits(.isModal)
+    }
+}
+
+private struct WatchEndTrimPromptView: View {
+    let suggestion: WorkoutEndTrimSuggestion
+    let onKeepAll: () -> Void
+    let onTrim: () -> Void
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Image(systemName: suggestion.reason == .vehicleMovement ? "car.fill" : "figure.stand")
+                .font(.title2)
+                .foregroundStyle(.orange)
+
+            Text("Trim Workout End?")
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+
+            Text(reasonText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+
+            Text(WorkoutFormatter.duration(suggestion.trimEndSeconds))
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+
+            HStack(spacing: 7) {
+                Button("Keep All", action: onKeepAll)
+                    .buttonStyle(.bordered)
+                Button("Auto Trim", action: onTrim)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+            }
+            .font(.caption)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.ignoresSafeArea())
+        .accessibilityAddTraits(.isModal)
+    }
+
+    private var reasonText: String {
+        switch suggestion.reason {
+        case .stoppedMoving:
+            return "Very little movement was found at the end."
+        case .vehicleMovement:
+            return "Slow movement followed by driving was found."
+        }
     }
 }

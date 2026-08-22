@@ -55,6 +55,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     private var routeBuilder: HKWorkoutRouteBuilder?
     private let locationManager = CLLocationManager()
     private var startDate: Date?
+    private var endDecisionDate: Date?
     private var activeSegmentStartDate: Date?
     private var accumulatedActiveSeconds: TimeInterval = 0
     private var lastAcceptedLocationDate: Date?
@@ -68,6 +69,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     private var rollingPaceSeconds = 30
     private var lastPaceRefreshElapsedSeconds: TimeInterval?
     private var lastIntervalCueID: String?
+    private var pendingTrimEndSeconds: TimeInterval = 0
+    private var pendingTrimmedDistanceMeters: Double?
     private let announcementSpeaker = WorkoutAnnouncementSpeaker()
     private let completionOutbox = WatchWorkoutCompletionOutbox()
 
@@ -122,15 +125,58 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         }
     }
 
-    func end() {
+    func beginEndConfirmation() -> Bool {
+        guard isActive, !isFinishing else { return false }
+        let wasRunning = !isPaused
+        let confirmationDate = Date()
+        endDecisionDate = confirmationDate
+        if wasRunning {
+            session?.pause()
+            transitionToPaused(at: confirmationDate)
+        }
+        return wasRunning
+    }
+
+    func cancelEndConfirmation(resumeWorkout: Bool) {
         guard isActive, !isFinishing else { return }
+        endDecisionDate = nil
+        guard resumeWorkout, isPaused else { return }
+        let resumeDate = Date()
+        session?.resume()
+        transitionToRunning(at: resumeDate)
+    }
+
+    func prepareToEnd() -> WorkoutEndTrimSuggestion? {
+        guard isActive, !isFinishing else { return nil }
         isFinishing = true
+        let decisionDate = endDecisionDate ?? Date()
+        endDecisionDate = decisionDate
         snapshot.elapsedSeconds = activeElapsed(at: Date())
-        presentCompletionSummaryIfNeeded(activity: activity)
+        if !isPaused {
+            session?.pause()
+            transitionToPaused(at: decisionDate)
+        }
         locationManager.stopUpdatingLocation()
         locationManager.stopUpdatingHeading()
         timer?.invalidate()
         timer = nil
+
+        guard activity?.environment == .outdoor,
+              let startDate else {
+            return nil
+        }
+        return WorkoutEndAnomalyDetector.suggestion(
+            route: snapshot.route,
+            workoutEnd: startDate.addingTimeInterval(snapshot.elapsedSeconds)
+        )
+    }
+
+    func finishEnd(trimSuggestion: WorkoutEndTrimSuggestion? = nil) {
+        guard isActive, isFinishing else { return }
+        let maximumTrim = max(0, snapshot.elapsedSeconds - 60)
+        pendingTrimEndSeconds = min(max(0, trimSuggestion?.trimEndSeconds ?? 0), maximumTrim)
+        pendingTrimmedDistanceMeters = pendingTrimEndSeconds > 0 ? trimSuggestion?.retainedDistanceMeters : nil
+        presentCompletionSummaryIfNeeded(activity: activity)
         guard let session else {
             failFinishedWorkout("Workout session data was unavailable.")
             return
@@ -190,6 +236,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
 
             let start = Date()
             startDate = start
+            endDecisionDate = nil
             activeSegmentStartDate = start
             accumulatedActiveSeconds = 0
             lastAcceptedLocationDate = nil
@@ -198,6 +245,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             lastIntervalCueID = initialIntervalCueID()
             activeSplitAnnouncementUnit = splitAnnouncementUnit.distanceUnit
             splitAnnouncementTracker.reset()
+            pendingTrimEndSeconds = 0
+            pendingTrimmedDistanceMeters = nil
             snapshot = .empty
             isActive = true
             isStarting = false
@@ -463,7 +512,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             return
         }
 
-        builder.endCollection(withEnd: Date()) { [weak self] success, error in
+        let collectionEndDate = endDecisionDate ?? Date()
+        builder.endCollection(withEnd: collectionEndDate) { [weak self] success, error in
             guard let self else { return }
             guard success else {
                 self.failFinishedWorkout(error?.localizedDescription ?? "HealthKit could not finish collecting the workout.")
@@ -502,7 +552,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             let completion = WatchWorkoutCompletion(
                 workoutID: workout.uuid,
                 activity: activity,
-                endedAt: workout.endDate
+                endedAt: workout.endDate,
+                trimEndSeconds: self.pendingTrimEndSeconds
             )
             self.completionOutbox.enqueue(completion)
             if WCSession.isSupported() {
@@ -517,20 +568,27 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     }
 
     private func presentCompletionSummaryIfNeeded(activity: WorkoutActivity?) {
+        let elapsedSeconds = max(0, snapshot.elapsedSeconds - pendingTrimEndSeconds)
+        let durationRatio = snapshot.elapsedSeconds > 0
+            ? min(max(elapsedSeconds / snapshot.elapsedSeconds, 0), 1)
+            : 0
+        let distanceMeters = pendingTrimmedDistanceMeters ?? snapshot.distanceMeters
+        let activeEnergyKilocalories = snapshot.activeEnergyKilocalories * durationRatio
+
         if completedWorkoutSummary == nil {
             completedWorkoutSummary = WatchWorkoutCompletionSummary(
                 id: UUID(),
                 activity: activity,
-                elapsedSeconds: snapshot.elapsedSeconds,
-                distanceMeters: snapshot.distanceMeters,
-                activeEnergyKilocalories: snapshot.activeEnergyKilocalories,
+                elapsedSeconds: elapsedSeconds,
+                distanceMeters: distanceMeters,
+                activeEnergyKilocalories: activeEnergyKilocalories,
                 saveState: .saving
             )
         } else {
             completedWorkoutSummary?.activity = activity
-            completedWorkoutSummary?.elapsedSeconds = snapshot.elapsedSeconds
-            completedWorkoutSummary?.distanceMeters = snapshot.distanceMeters
-            completedWorkoutSummary?.activeEnergyKilocalories = snapshot.activeEnergyKilocalories
+            completedWorkoutSummary?.elapsedSeconds = elapsedSeconds
+            completedWorkoutSummary?.distanceMeters = distanceMeters
+            completedWorkoutSummary?.activeEnergyKilocalories = activeEnergyKilocalories
         }
     }
 
@@ -550,12 +608,15 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         isFinishing = false
         isPaused = false
         startDate = nil
+        endDecisionDate = nil
         activeSegmentStartDate = nil
         accumulatedActiveSeconds = 0
         lastAcceptedLocationDate = nil
         hasLiveHealthKitDistance = false
         lastPaceRefreshElapsedSeconds = nil
         lastIntervalCueID = nil
+        pendingTrimEndSeconds = 0
+        pendingTrimmedDistanceMeters = nil
         activeSplitAnnouncementUnit = nil
         splitAnnouncementTracker.reset()
         session = nil
