@@ -272,6 +272,32 @@ enum PaceCalculator {
         return elapsedSeconds / units
     }
 
+    static func averagePaceSecondsPerUnit(splits: [SplitSummary], unit: DistanceUnit) -> Double? {
+        var units = 0.0
+        var seconds = 0.0
+        for split in splits {
+            guard let pace = split.paceSecondsPerUnit, split.distanceMeters > 0 else { continue }
+            let splitUnits = split.distanceMeters / unit.metersPerUnit
+            units += splitUnits
+            seconds += pace * splitUnits
+        }
+        guard units > 0, seconds > 0 else { return nil }
+        return seconds / units
+    }
+
+    static func averagePaceSecondsPerUnit(
+        for workout: WorkoutSummary,
+        splits: [SplitSummary],
+        unit: DistanceUnit
+    ) -> Double? {
+        averagePaceSecondsPerUnit(splits: splits, unit: unit)
+            ?? paceSecondsPerUnit(
+                distanceMeters: workout.distanceMeters,
+                elapsedSeconds: workout.duration,
+                unit: unit
+            )
+    }
+
     static func rollingPace(points: [RoutePoint], windowSeconds: Int, unit: DistanceUnit) -> Double? {
         guard let last = points.last, points.count > 1 else { return nil }
         let cutoff = last.timestamp.addingTimeInterval(-TimeInterval(windowSeconds))

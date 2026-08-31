@@ -21,7 +21,7 @@ struct ActivityDetailView: View {
 
         List {
             Section {
-                metricGrid(workout: displayWorkout)
+                metricGrid(workout: displayWorkout, splits: displaySplits)
                     .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16))
             }
 
@@ -243,7 +243,7 @@ struct ActivityDetailView: View {
             : "This removes the activity from Tracker."
     }
 
-    private func metricGrid(workout: WorkoutSummary) -> some View {
+    private func metricGrid(workout: WorkoutSummary, splits: [SplitSummary]) -> some View {
         Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
             GridRow {
                 MetricTile(title: "Time", value: WorkoutFormatter.duration(workout.duration))
@@ -260,7 +260,7 @@ struct ActivityDetailView: View {
             if workout.activity.supportsPace {
                 GridRow {
                     MetricTile(title: "Active Calories", value: WorkoutFormatter.activeCalories(workout.activeEnergyKilocalories))
-                    MetricTile(title: "Pace", value: WorkoutFormatter.pace(PaceCalculator.paceSecondsPerUnit(distanceMeters: workout.distanceMeters, elapsedSeconds: workout.duration, unit: appState.settings.distanceUnit), unit: appState.settings.distanceUnit))
+                    MetricTile(title: "Pace", value: WorkoutFormatter.pace(PaceCalculator.averagePaceSecondsPerUnit(for: workout, splits: splits, unit: appState.settings.distanceUnit), unit: appState.settings.distanceUnit))
                 }
             }
             if workout.activity == .outdoorRun || workout.activity == .outdoorWalk {

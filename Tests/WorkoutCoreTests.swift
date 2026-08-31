@@ -1101,6 +1101,102 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(splits[1].paceSecondsPerUnit ?? 0, 480, accuracy: 0.01)
     }
 
+    func testAveragePaceMatchesSplitsWhenWorkoutDurationIncludesNonMovingTime() {
+        let start = Date(timeIntervalSince1970: 3_000)
+        let mile = DistanceUnit.miles.metersPerUnit
+        // GPS only starts 120s into the workout and the run ends 60s before the
+        // workout is stopped, so `duration` spans more time than the route covers.
+        let route = [
+            routePoint(distanceMeters: 0, seconds: 120, start: start),
+            routePoint(distanceMeters: mile, seconds: 600, start: start),
+            routePoint(distanceMeters: mile * 2, seconds: 1_080, start: start)
+        ]
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_140),
+            duration: 1_140,
+            distanceMeters: mile * 2,
+            activeEnergyKilocalories: 300,
+            route: route
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+        let averagePace = PaceCalculator.averagePaceSecondsPerUnit(for: workout, splits: splits, unit: .miles)
+
+        XCTAssertEqual(splits.count, 2)
+        XCTAssertEqual(splits[0].paceSecondsPerUnit ?? 0, 480, accuracy: 0.01)
+        XCTAssertEqual(splits[1].paceSecondsPerUnit ?? 0, 480, accuracy: 0.01)
+        // Whole-workout duration would report 9:30/mi even though every split ran 8:00/mi.
+        XCTAssertEqual(averagePace ?? 0, 480, accuracy: 0.01)
+    }
+
+    func testAveragePaceExcludesRecordedPauseTimeLikeSplits() {
+        let start = Date(timeIntervalSince1970: 3_100)
+        let mile = DistanceUnit.miles.metersPerUnit
+        let route = [
+            routePoint(distanceMeters: 0, seconds: 0, start: start),
+            routePoint(distanceMeters: mile, seconds: 480, start: start),
+            routePoint(distanceMeters: mile, seconds: 780, start: start),
+            routePoint(distanceMeters: mile * 2, seconds: 1_260, start: start)
+        ]
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_260),
+            duration: 1_260,
+            distanceMeters: mile * 2,
+            activeEnergyKilocalories: 300,
+            route: route,
+            recordedPauseRanges: [
+                DateRangeValue(start: start.addingTimeInterval(480), end: start.addingTimeInterval(780))
+            ]
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+        let averagePace = PaceCalculator.averagePaceSecondsPerUnit(for: workout, splits: splits, unit: .miles)
+
+        XCTAssertEqual(averagePace ?? 0, 480, accuracy: 0.01)
+    }
+
+    func testAveragePaceWeightsPartialFinalSplitByDistance() {
+        let start = Date(timeIntervalSince1970: 3_200)
+        let mile = DistanceUnit.miles.metersPerUnit
+        let splits = [
+            SplitSummary(distanceMeters: mile, paceSecondsPerUnit: 600),
+            SplitSummary(distanceMeters: mile * 0.5, paceSecondsPerUnit: 480)
+        ]
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(840),
+            duration: 840,
+            distanceMeters: mile * 1.5,
+            activeEnergyKilocalories: 200
+        )
+
+        let averagePace = PaceCalculator.averagePaceSecondsPerUnit(for: workout, splits: splits, unit: .miles)
+
+        // (600 * 1 + 480 * 0.5) / 1.5 — the half-mile split must not count as a whole one.
+        XCTAssertEqual(averagePace ?? 0, 560, accuracy: 0.01)
+    }
+
+    func testAveragePaceFallsBackToWorkoutDurationWithoutSplits() {
+        let start = Date(timeIntervalSince1970: 3_300)
+        let workout = WorkoutSummary(
+            activity: .indoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_200),
+            duration: 1_200,
+            distanceMeters: DistanceUnit.miles.metersPerUnit * 2,
+            activeEnergyKilocalories: 250
+        )
+
+        let averagePace = PaceCalculator.averagePaceSecondsPerUnit(for: workout, splits: [], unit: .miles)
+
+        XCTAssertEqual(averagePace ?? 0, 600, accuracy: 0.01)
+    }
+
     func testSplitBuilderFallsBackToProportionalKilometerSplitsWithoutRoute() {
         let start = Date(timeIntervalSince1970: 2_800)
         let workout = WorkoutSummary(
