@@ -127,6 +127,7 @@ struct WatchRootView: View {
             workoutManager.updateSettings(watchState.settings)
             workoutManager.beginLocationAcquisition()
             consumePendingIntentStart()
+            routePendingIntentCommand()
         }
         .onChange(of: watchState.settings) { _, settings in
             workoutManager.updateSettings(settings)
@@ -135,6 +136,7 @@ struct WatchRootView: View {
             if phase == .active {
                 workoutManager.beginLocationAcquisition()
                 consumePendingIntentStart()
+                routePendingIntentCommand()
             } else {
                 workoutManager.stopPreworkoutLocationAcquisition()
             }
@@ -153,6 +155,20 @@ struct WatchRootView: View {
             return
         }
         start(pending)
+    }
+
+    /// The Action Button reaches the app through an intent, which can fire while
+    /// the workout screen is already on-screen and will not re-appear. Routing it
+    /// from the root on every activation is the one hook that always runs.
+    private func routePendingIntentCommand() {
+        guard let pending = watchState.consumePendingIntentCommand() else { return }
+        guard let command = WatchIntentCommandRouter.deliverableCommand(
+            pending: pending,
+            isWorkoutActive: workoutManager.isActive
+        ) else {
+            return
+        }
+        watchState.enqueueRemoteCommand(command)
     }
 
     private func dismissWorkoutSummary() {

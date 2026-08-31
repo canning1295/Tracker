@@ -900,7 +900,7 @@ final class AppState {
     private var actionButtonReadiness: DeviceReadinessItem {
         DeviceReadinessItem(
             title: "Action Button",
-            detail: "Assign the Tracker Open Tracker shortcut to the Apple Watch Ultra Action Button, then run a signed device test.",
+            detail: "Assign the Tracker Pause or Resume Workout shortcut to the Apple Watch Ultra Action Button. With no workout running it opens Tracker at the start screen.",
             level: .warning
         )
     }
@@ -908,7 +908,7 @@ final class AppState {
     private var workoutControlsReadiness: DeviceReadinessItem {
         DeviceReadinessItem(
             title: "Workout Controls",
-            detail: "Watch on-screen Pause/Resume and End are wired. Physical side-button behavior still needs validation on the installed Watch app.",
+            detail: "On-screen Pause/Resume and End are wired, and the phone can control a running workout. watchOS does not expose the Digital Crown press or side button to apps, so the Action Button shortcut is the only hardware control.",
             level: .warning
         )
     }

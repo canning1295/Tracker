@@ -162,6 +162,10 @@ final class WatchAppState: NSObject, ObservableObject, WCSessionDelegate {
         pendingRemoteCommand = nil
     }
 
+    func enqueueRemoteCommand(_ command: WatchWorkoutRemoteCommand) {
+        pendingRemoteCommand = command
+    }
+
     func setTouchControlsEnabled(_ enabled: Bool) {
         guard settings.touchControlsEnabled != enabled else { return }
         settings.touchControlsEnabled = enabled

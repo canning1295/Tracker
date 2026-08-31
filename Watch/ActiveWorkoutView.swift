@@ -104,9 +104,6 @@ struct ActiveWorkoutView: View {
                 didApplyAutoLock = true
                 watchState.setTouchControlsEnabled(false)
             }
-            if let command = watchState.consumePendingIntentCommand() {
-                apply(command)
-            }
             broadcastLiveSession()
         }
     }

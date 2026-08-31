@@ -993,6 +993,19 @@ struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
     }
 }
 
+enum WatchIntentCommandRouter {
+    /// An Action Button press with nothing running should only open the app at the
+    /// start screen. Holding the command back for later would pause the next
+    /// workout the moment it starts.
+    static func deliverableCommand(
+        pending: WatchWorkoutRemoteCommand?,
+        isWorkoutActive: Bool
+    ) -> WatchWorkoutRemoteCommand? {
+        guard let pending, isWorkoutActive else { return nil }
+        return pending
+    }
+}
+
 /// Wrapper so a cleared session can be sent as explicitly as an active one.
 struct WatchLiveSessionEnvelope: Codable, Equatable {
     var status: WatchLiveSessionStatus?

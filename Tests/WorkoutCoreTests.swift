@@ -1101,6 +1101,22 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(splits[1].paceSecondsPerUnit ?? 0, 480, accuracy: 0.01)
     }
 
+    func testIntentCommandIsDroppedWhenNoWorkoutIsRunning() {
+        // Pressing the Action Button with nothing running must only open the app.
+        // Holding the command back would pause the next workout on its first tick.
+        XCTAssertNil(WatchIntentCommandRouter.deliverableCommand(
+            pending: .togglePause,
+            isWorkoutActive: false
+        ))
+
+        XCTAssertEqual(
+            WatchIntentCommandRouter.deliverableCommand(pending: .togglePause, isWorkoutActive: true),
+            .togglePause
+        )
+
+        XCTAssertNil(WatchIntentCommandRouter.deliverableCommand(pending: nil, isWorkoutActive: true))
+    }
+
     func testPendingWorkoutCommandStoreConsumesOnlyOnce() throws {
         let suiteName = "TrackerTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
