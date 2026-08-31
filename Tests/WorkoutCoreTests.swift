@@ -1208,6 +1208,64 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(WatchWorkoutRemoteCommand(rawValue: "togglePause"), .togglePause)
     }
 
+    func testExportedTrackpointsEndAtRecordedDistance() {
+        let start = Date(timeIntervalSince1970: 4_000)
+        let mile = DistanceUnit.miles.metersPerUnit
+        let gpsDistance = mile * 2 * 1.022
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(960),
+            duration: 960,
+            distanceMeters: mile * 2,
+            activeEnergyKilocalories: 300,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: gpsDistance / 2, seconds: 480, start: start),
+                routePoint(distanceMeters: gpsDistance, seconds: 960, start: start)
+            ]
+        )
+
+        let tcx = String(decoding: WorkoutExporter().tcxData(for: workout), as: UTF8.self)
+        let distances = tcx
+            .components(separatedBy: "<DistanceMeters>")
+            .dropFirst()
+            .compactMap { Double($0.components(separatedBy: "<").first ?? "") }
+
+        // First value is the lap total; the rest are trackpoints. Strava recomputes
+        // from the trackpoints, so the last one has to agree with the lap.
+        let lap = try! XCTUnwrap(distances.first)
+        let lastTrackpoint = try! XCTUnwrap(distances.last)
+        XCTAssertEqual(lap, mile * 2, accuracy: 1)
+        XCTAssertEqual(lastTrackpoint, mile * 2, accuracy: 2)
+    }
+
+    func testExportedTrackpointsLeaveIncompleteRoutesAlone() {
+        let start = Date(timeIntervalSince1970: 4_100)
+        let mile = DistanceUnit.miles.metersPerUnit
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_920),
+            duration: 1_920,
+            distanceMeters: mile * 4,
+            activeEnergyKilocalories: 400,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: mile * 2, seconds: 960, start: start)
+            ]
+        )
+
+        let tcx = String(decoding: WorkoutExporter().tcxData(for: workout), as: UTF8.self)
+        let distances = tcx
+            .components(separatedBy: "<DistanceMeters>")
+            .dropFirst()
+            .compactMap { Double($0.components(separatedBy: "<").first ?? "") }
+
+        // Half the run has no GPS; stretching the track would fabricate distance.
+        XCTAssertEqual(distances.last ?? 0, mile * 2, accuracy: 2)
+    }
+
     func testSplitsAreMeasuredAgainstRecordedDistanceNotRawGPSDistance() {
         let start = Date(timeIntervalSince1970: 3_800)
         let mile = DistanceUnit.miles.metersPerUnit

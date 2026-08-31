@@ -867,6 +867,29 @@ enum WorkoutMerger {
     }
 }
 
+/// Summing GPS points overstates distance: every fix carries noise and the error
+/// only ever adds, so a recorded track always measures long. Left uncorrected a
+/// "mile" split is short of a mile, so every split reads faster than the run was,
+/// and an exported track disagrees with the distance stated beside it.
+///
+/// Anything derived from the route is therefore calibrated to the workout's
+/// recorded distance, which comes from sensor fusion rather than raw points and
+/// is the figure Apple Health displays.
+enum RouteDistanceCalibration {
+    /// GPS drift is a small percentage. A route measuring far off the recorded
+    /// distance is missing data rather than drifting, and stretching it would
+    /// invent a workout that never happened, so it is left alone.
+    static let minimumScale = 0.85
+    static let maximumScale = 1.15
+
+    static func scale(recordedMeters: Double, routeMeters: Double) -> Double {
+        guard recordedMeters > 0, routeMeters > 0 else { return 1 }
+        let ratio = recordedMeters / routeMeters
+        guard ratio >= minimumScale, ratio <= maximumScale else { return 1 }
+        return ratio
+    }
+}
+
 enum SplitBuilder {
     static func splits(for workout: WorkoutSummary, unit: DistanceUnit) -> [SplitSummary] {
         guard workout.activity.recordsDistance else { return [] }
@@ -886,25 +909,14 @@ enum SplitBuilder {
         return proportionalSplits(for: workout, unit: unit)
     }
 
-    /// Summing GPS points overstates distance -- every fix carries noise, and the
-    /// error only ever adds. Left alone, each "mile" split is short, so every
-    /// split reads faster than the run really was. Splits are measured against
-    /// the workout's recorded distance instead, which comes from sensor fusion
-    /// rather than raw points.
-    ///
-    /// Only noise-sized corrections are applied. A route covering far less than
-    /// the recorded distance is missing data, not drifting, and stretching it
-    /// would invent a workout that never happened.
     private static func distanceScale(
         for workout: WorkoutSummary,
         pauseRanges: [DateRangeValue]
     ) -> Double {
-        guard workout.distanceMeters > 0 else { return 1 }
-        let accumulated = accumulatedRouteDistance(points: workout.route, pauseRanges: pauseRanges)
-        guard accumulated > 0 else { return 1 }
-        let ratio = workout.distanceMeters / accumulated
-        guard ratio >= 0.85, ratio <= 1.15 else { return 1 }
-        return ratio
+        RouteDistanceCalibration.scale(
+            recordedMeters: workout.distanceMeters,
+            routeMeters: accumulatedRouteDistance(points: workout.route, pauseRanges: pauseRanges)
+        )
     }
 
     /// Distance the split walk actually accumulates, which skips paused and

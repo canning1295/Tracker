@@ -29,7 +29,14 @@ struct WorkoutExporter {
 
     private func trackpoints(for workout: WorkoutSummary) -> String {
         if !workout.route.isEmpty {
-            return routeTrackpoints(route: workout.route, heartRateSamples: workout.heartRateSamples)
+            return routeTrackpoints(
+                route: workout.route,
+                heartRateSamples: workout.heartRateSamples,
+                distanceScale: RouteDistanceCalibration.scale(
+                    recordedMeters: workout.distanceMeters,
+                    routeMeters: PaceCalculator.totalDistanceMeters(points: workout.route)
+                )
+            )
         }
 
         return workout.heartRateSamples.map { sample in
@@ -39,13 +46,20 @@ struct WorkoutExporter {
         }.joined()
     }
 
-    private func routeTrackpoints(route: [RoutePoint], heartRateSamples: [HeartRateSample]) -> String {
+    /// Strava and friends recompute distance from the trackpoints rather than the
+    /// lap total, so uncalibrated points would report a longer, faster run than
+    /// the summary states.
+    private func routeTrackpoints(
+        route: [RoutePoint],
+        heartRateSamples: [HeartRateSample],
+        distanceScale: Double
+    ) -> String {
         var cumulativeDistance = 0.0
         var previousPoint: RoutePoint?
 
         return route.map { point in
             if let previousPoint {
-                cumulativeDistance += PaceCalculator.distanceMeters(between: previousPoint, and: point)
+                cumulativeDistance += PaceCalculator.distanceMeters(between: previousPoint, and: point) * distanceScale
             }
             previousPoint = point
 
