@@ -15,6 +15,7 @@ struct WatchConnectivityReadiness {
 final class PhoneConnectivityClient: NSObject, WCSessionDelegate {
     var onWorkoutFinished: ((WatchWorkoutCompletion) -> Void)?
     var onSettingsReceived: ((WorkoutSettings) -> Void)?
+    var onLiveSessionReceived: ((WatchLiveSessionStatus?) -> Void)?
     private var pendingApplicationContext: [String: Any]?
     private var pendingUserInfoTransfers: [[String: Any]] = []
     private var receivedWorkoutCompletionIDs = Set<UUID>()
@@ -94,6 +95,24 @@ final class PhoneConnectivityClient: NSObject, WCSessionDelegate {
         }
     }
 
+    /// Live workout controls only make sense against a Watch that is listening
+    /// right now, so an unreachable Watch reports failure instead of queueing a
+    /// pause that would land minutes later.
+    @discardableResult
+    func sendCommand(_ command: WatchWorkoutRemoteCommand) -> Bool {
+        guard let session,
+              session.activationState == .activated,
+              session.isReachable else {
+            return false
+        }
+        session.sendMessage(
+            [WatchConnectivityPayloadKey.remoteCommand: command.rawValue],
+            replyHandler: nil,
+            errorHandler: nil
+        )
+        return true
+    }
+
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
         guard activationState == .activated else { return }
         flushPendingTransfers(on: session)
@@ -101,11 +120,13 @@ final class PhoneConnectivityClient: NSObject, WCSessionDelegate {
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         receiveWorkoutFinishedPayload(message)
         receiveSettingsPayload(message)
+        receiveLiveSessionPayload(message)
     }
 
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         receiveWorkoutFinishedPayload(userInfo)
         receiveSettingsPayload(userInfo)
+        receiveLiveSessionPayload(userInfo)
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {}
@@ -128,6 +149,16 @@ final class PhoneConnectivityClient: NSObject, WCSessionDelegate {
         }
         DispatchQueue.main.async {
             self.onSettingsReceived?(settings)
+        }
+    }
+
+    private func receiveLiveSessionPayload(_ payload: [String: Any]) {
+        guard let data = payload[WatchConnectivityPayloadKey.liveSession] as? Data,
+              let envelope = try? JSONDecoder().decode(WatchLiveSessionEnvelope.self, from: data) else {
+            return
+        }
+        DispatchQueue.main.async {
+            self.onLiveSessionReceived?(envelope.status)
         }
     }
 

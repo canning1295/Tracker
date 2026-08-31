@@ -53,6 +53,7 @@ final class WatchAppState: NSObject, ObservableObject, WCSessionDelegate {
     @Published var settings: WorkoutSettings
     @Published var intervals: [IntervalWorkout]
     @Published var requestedStartActivity: WorkoutActivity?
+    @Published var pendingRemoteCommand: WatchWorkoutRemoteCommand?
 
     private let store = SettingsStore()
     private let completionOutbox = WatchWorkoutCompletionOutbox()
@@ -136,11 +137,13 @@ final class WatchAppState: NSObject, ObservableObject, WCSessionDelegate {
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
         receiveStartPayload(message)
         receiveSettingsPayload(message)
+        receiveRemoteCommandPayload(message)
     }
 
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         receiveStartPayload(userInfo)
         receiveSettingsPayload(userInfo)
+        receiveRemoteCommandPayload(userInfo)
     }
 
     func consumePendingIntentStart() -> WorkoutActivity? {
@@ -149,6 +152,47 @@ final class WatchAppState: NSObject, ObservableObject, WCSessionDelegate {
 
     func clearRequestedStart() {
         requestedStartActivity = nil
+    }
+
+    func consumePendingIntentCommand() -> WatchWorkoutRemoteCommand? {
+        PendingWorkoutCommandStore.consume()
+    }
+
+    func clearPendingRemoteCommand() {
+        pendingRemoteCommand = nil
+    }
+
+    func setTouchControlsEnabled(_ enabled: Bool) {
+        guard settings.touchControlsEnabled != enabled else { return }
+        settings.touchControlsEnabled = enabled
+        store.saveSettings(settings)
+        sendSettingsToPhone()
+    }
+
+    /// Live status is only useful while the phone is actually reachable, so it is
+    /// sent as a message and deliberately not queued for later delivery.
+    func sendLiveSession(_ status: WatchLiveSessionStatus?) {
+        guard WCSession.isSupported(),
+              WCSession.default.activationState == .activated,
+              WCSession.default.isReachable,
+              let data = try? JSONEncoder().encode(WatchLiveSessionEnvelope(status: status)) else {
+            return
+        }
+        WCSession.default.sendMessage(
+            [WatchConnectivityPayloadKey.liveSession: data],
+            replyHandler: nil,
+            errorHandler: nil
+        )
+    }
+
+    private func receiveRemoteCommandPayload(_ payload: [String: Any]) {
+        guard let raw = payload[WatchConnectivityPayloadKey.remoteCommand] as? String,
+              let command = WatchWorkoutRemoteCommand(rawValue: raw) else {
+            return
+        }
+        DispatchQueue.main.async {
+            self.pendingRemoteCommand = command
+        }
     }
 
     private func receiveStartPayload(_ payload: [String: Any]) {

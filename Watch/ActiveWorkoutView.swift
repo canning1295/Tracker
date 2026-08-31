@@ -13,6 +13,9 @@ struct ActiveWorkoutView: View {
     @State private var page = 0
     @State private var endPrompt: WorkoutEndPrompt?
     @State private var resumesAfterEndCancel = false
+    @State private var crownUnlockProgress = 0.0
+    @State private var didApplyAutoLock = false
+    private let liveSessionHeartbeat = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ZStack {
@@ -41,6 +44,11 @@ struct ActiveWorkoutView: View {
                 )
                     .tag(controlsTag)
             }
+            .allowsHitTesting(!isTouchLocked)
+
+            if isTouchLocked {
+                TouchLockOverlay(unlockProgress: $crownUnlockProgress)
+            }
 
             if let endPrompt {
                 switch endPrompt {
@@ -64,10 +72,43 @@ struct ActiveWorkoutView: View {
                 }
             }
         }
-        .tabViewStyle(.page(indexDisplayMode: .always))
+        .tabViewStyle(.page(indexDisplayMode: isTouchLocked ? .never : .always))
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         ._statusBarHidden(true)
+        .onChange(of: crownUnlockProgress) { _, value in
+            guard isTouchLocked, value >= 1 else { return }
+            watchState.setTouchControlsEnabled(true)
+            WKInterfaceDevice.current().play(.success)
+        }
+        .onChange(of: isTouchLocked) { _, locked in
+            crownUnlockProgress = 0
+            if locked {
+                page = 0
+            }
+        }
+        .onChange(of: watchState.pendingRemoteCommand) { _, command in
+            guard let command else { return }
+            watchState.clearPendingRemoteCommand()
+            apply(command)
+        }
+        .onChange(of: workoutManager.isPaused) { _, _ in broadcastLiveSession() }
+        .onChange(of: workoutManager.isActive) { _, _ in broadcastLiveSession() }
+        .onChange(of: workoutManager.isFinishing) { _, _ in broadcastLiveSession() }
+        .onReceive(liveSessionHeartbeat) { _ in
+            broadcastLiveSession()
+        }
+        .onAppear {
+            // Only once per workout: re-appearing must never undo a manual unlock.
+            if !didApplyAutoLock, watchState.settings.autoDisableTouchOnWorkoutStart {
+                didApplyAutoLock = true
+                watchState.setTouchControlsEnabled(false)
+            }
+            if let command = watchState.consumePendingIntentCommand() {
+                apply(command)
+            }
+            broadcastLiveSession()
+        }
     }
 
     private var hasOutdoorMap: Bool {
@@ -76,6 +117,27 @@ struct ActiveWorkoutView: View {
 
     private var controlsTag: Int {
         hasOutdoorMap ? 2 : 1
+    }
+
+    private var isTouchLocked: Bool {
+        !watchState.settings.touchControlsEnabled
+    }
+
+    private func apply(_ command: WatchWorkoutRemoteCommand) {
+        guard workoutManager.isActive else { return }
+        if command == .end {
+            endPrompt = nil
+        }
+        workoutManager.applyRemoteCommand(command)
+        if !workoutManager.isPaused {
+            page = 0
+        }
+        WKInterfaceDevice.current().play(.click)
+        broadcastLiveSession()
+    }
+
+    private func broadcastLiveSession() {
+        watchState.sendLiveSession(workoutManager.liveSessionStatus)
     }
 
     private func togglePause() {
@@ -109,6 +171,50 @@ struct ActiveWorkoutView: View {
             page = 0
         }
         resumesAfterEndCancel = false
+    }
+}
+
+/// Covers the workout screens while touch is locked. Rain can fake taps and
+/// swipes but not a sustained crown turn, so the crown is the one input trusted
+/// to unlock -- the same escape hatch Apple's own Water Lock uses.
+private struct TouchLockOverlay: View {
+    @Binding var unlockProgress: Double
+
+    var body: some View {
+        VStack {
+            HStack(spacing: 6) {
+                Image(systemName: "lock.fill")
+                Text("Turn crown to unlock")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(.yellow)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.black.opacity(0.75), in: Capsule())
+
+            if unlockProgress > 0 {
+                ProgressView(value: min(max(unlockProgress, 0), 1))
+                    .progressViewStyle(.linear)
+                    .tint(.yellow)
+                    .frame(width: 90)
+                    .padding(.top, 4)
+            }
+
+            Spacer()
+        }
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .focusable(true)
+        .digitalCrownRotation(
+            $unlockProgress,
+            from: 0,
+            through: 1,
+            by: 0.02,
+            sensitivity: .low,
+            isContinuous: false,
+            isHapticFeedbackEnabled: true
+        )
     }
 }
 

@@ -867,6 +867,58 @@ enum WatchConnectivityPayloadKey {
     static let activity = "activity"
     static let endedAt = "endedAt"
     static let trimEndSeconds = "trimEndSeconds"
+    static let remoteCommand = "remoteCommand"
+    static let liveSession = "liveSession"
+}
+
+/// Control the Watch can be asked to perform from the phone or an App Intent.
+enum WatchWorkoutRemoteCommand: String, Codable, Equatable {
+    case togglePause
+    case pause
+    case resume
+    case end
+}
+
+/// Snapshot of the Watch's running session, mirrored to the phone so it can
+/// show and control the workout while the Watch screen is locked.
+struct WatchLiveSessionStatus: Codable, Equatable {
+    var activity: WorkoutActivity
+    var isPaused: Bool
+    var isFinishing: Bool
+    var elapsedSeconds: TimeInterval
+    var distanceMeters: Double
+    var updatedAt: Date
+
+    init(
+        activity: WorkoutActivity,
+        isPaused: Bool,
+        isFinishing: Bool,
+        elapsedSeconds: TimeInterval,
+        distanceMeters: Double,
+        updatedAt: Date = Date()
+    ) {
+        self.activity = activity
+        self.isPaused = isPaused
+        self.isFinishing = isFinishing
+        self.elapsedSeconds = elapsedSeconds
+        self.distanceMeters = distanceMeters
+        self.updatedAt = updatedAt
+    }
+
+    /// Live status goes stale quickly once the Watch stops reporting, so the
+    /// phone hides the controls rather than acting on a dead session.
+    static let staleAfterSeconds: TimeInterval = 90
+
+    func isStale(asOf date: Date = Date()) -> Bool {
+        date.timeIntervalSince(updatedAt) > Self.staleAfterSeconds
+    }
+
+    /// The Watch only reports on state changes and a slow heartbeat, so a running
+    /// clock is carried forward from the last report rather than shown stale.
+    func elapsedSeconds(asOf date: Date) -> TimeInterval {
+        guard !isPaused, !isFinishing else { return elapsedSeconds }
+        return elapsedSeconds + max(0, date.timeIntervalSince(updatedAt))
+    }
 }
 
 struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
@@ -938,6 +990,34 @@ struct WatchWorkoutCompletion: Codable, Equatable, Identifiable {
         activity = try container.decodeIfPresent(WorkoutActivity.self, forKey: .activity)
         endedAt = try container.decode(Date.self, forKey: .endedAt)
         trimEndSeconds = max(0, try container.decodeIfPresent(TimeInterval.self, forKey: .trimEndSeconds) ?? 0)
+    }
+}
+
+/// Wrapper so a cleared session can be sent as explicitly as an active one.
+struct WatchLiveSessionEnvelope: Codable, Equatable {
+    var status: WatchLiveSessionStatus?
+
+    init(status: WatchLiveSessionStatus?) {
+        self.status = status
+    }
+}
+
+/// Bridges an App Intent (the Ultra Action Button) into the running Watch app,
+/// which may only be resumed after the intent has already finished.
+enum PendingWorkoutCommandStore {
+    private static let key = "pendingWorkoutRemoteCommand"
+
+    static func set(_ command: WatchWorkoutRemoteCommand, defaults: UserDefaults = .standard) {
+        defaults.set(command.rawValue, forKey: key)
+    }
+
+    static func consume(defaults: UserDefaults = .standard) -> WatchWorkoutRemoteCommand? {
+        guard let raw = defaults.string(forKey: key),
+              let command = WatchWorkoutRemoteCommand(rawValue: raw) else {
+            return nil
+        }
+        defaults.removeObject(forKey: key)
+        return command
     }
 }
 

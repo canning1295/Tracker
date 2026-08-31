@@ -60,8 +60,31 @@ struct StartWorkoutIntent: AppIntent {
     }
 }
 
+/// Assignable to the Apple Watch Ultra Action Button (Settings > Action Button >
+/// Shortcut) so a workout can be paused without touching the screen.
+struct TogglePauseWorkoutIntent: AppIntent {
+    static var title: LocalizedStringResource = "Pause or Resume Workout"
+    static var description = IntentDescription("Pause the running Tracker workout, or resume it if it is already paused.")
+    static var openAppWhenRun = true
+
+    func perform() async throws -> some IntentResult {
+        PendingWorkoutCommandStore.set(.togglePause)
+        return .result()
+    }
+}
+
 struct TrackerShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: TogglePauseWorkoutIntent(),
+            phrases: [
+                "Pause my workout in \(.applicationName)",
+                "Resume my workout in \(.applicationName)"
+            ],
+            shortTitle: "Pause or Resume",
+            systemImageName: "playpause.circle"
+        )
+
         AppShortcut(
             intent: StartWorkoutIntent(activity: .outdoorRun),
             phrases: [

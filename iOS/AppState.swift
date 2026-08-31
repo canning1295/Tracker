@@ -137,6 +137,8 @@ final class AppState {
     let healthKit = HealthKitClient()
     let strava = StravaClient()
     let connectivity = PhoneConnectivityClient()
+    var liveWatchSession: WatchLiveSessionStatus?
+    var watchControlMessage: String?
 
     private let settingsStore = SettingsStore()
     private var settingsObserver: NSObjectProtocol?
@@ -171,6 +173,14 @@ final class AppState {
         connectivity.onSettingsReceived = { [weak self] settings in
             Task { @MainActor in
                 self?.settings = settings
+            }
+        }
+        connectivity.onLiveSessionReceived = { [weak self] status in
+            Task { @MainActor in
+                self?.liveWatchSession = status
+                if status == nil {
+                    self?.watchControlMessage = nil
+                }
             }
         }
         settingsObserver = NotificationCenter.default.addObserver(
@@ -257,6 +267,26 @@ final class AppState {
 
     func startOnWatch(activity: WorkoutActivity) {
         connectivity.sendStart(activity: activity)
+    }
+
+    /// The Watch reports back its new state, so the phone deliberately does not
+    /// guess at the result -- it only reports when the command could not be sent.
+    func sendWatchCommand(_ command: WatchWorkoutRemoteCommand) {
+        guard connectivity.sendCommand(command) else {
+            watchControlMessage = "Watch is not reachable right now."
+            return
+        }
+        watchControlMessage = nil
+    }
+
+    var activeWatchSession: WatchLiveSessionStatus? {
+        guard let liveWatchSession, !liveWatchSession.isStale() else { return nil }
+        return liveWatchSession
+    }
+
+    func setWatchTouchControlsEnabled(_ enabled: Bool) {
+        guard settings.touchControlsEnabled != enabled else { return }
+        settings.touchControlsEnabled = enabled
     }
 
     func consumePendingIntentStart() {

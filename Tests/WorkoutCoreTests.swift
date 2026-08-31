@@ -1101,6 +1101,97 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(splits[1].paceSecondsPerUnit ?? 0, 480, accuracy: 0.01)
     }
 
+    func testPendingWorkoutCommandStoreConsumesOnlyOnce() throws {
+        let suiteName = "TrackerTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        XCTAssertNil(PendingWorkoutCommandStore.consume(defaults: defaults))
+
+        PendingWorkoutCommandStore.set(.togglePause, defaults: defaults)
+
+        XCTAssertEqual(PendingWorkoutCommandStore.consume(defaults: defaults), .togglePause)
+        // An Action Button press must not pause twice if the app relaunches.
+        XCTAssertNil(PendingWorkoutCommandStore.consume(defaults: defaults))
+    }
+
+    func testLiveSessionStatusGoesStaleAfterWatchStopsReporting() {
+        let now = Date(timeIntervalSince1970: 5_000)
+        let status = WatchLiveSessionStatus(
+            activity: .outdoorRun,
+            isPaused: false,
+            isFinishing: false,
+            elapsedSeconds: 600,
+            distanceMeters: 1_600,
+            updatedAt: now
+        )
+
+        XCTAssertFalse(status.isStale(asOf: now.addingTimeInterval(WatchLiveSessionStatus.staleAfterSeconds - 1)))
+        XCTAssertTrue(status.isStale(asOf: now.addingTimeInterval(WatchLiveSessionStatus.staleAfterSeconds + 1)))
+    }
+
+    func testLiveSessionElapsedAdvancesWhileRunningAndHoldsWhilePaused() {
+        let reported = Date(timeIntervalSince1970: 7_000)
+        let running = WatchLiveSessionStatus(
+            activity: .outdoorRun,
+            isPaused: false,
+            isFinishing: false,
+            elapsedSeconds: 600,
+            distanceMeters: 1_600,
+            updatedAt: reported
+        )
+
+        // The Watch only reports on changes and a 30s heartbeat, so the phone
+        // carries the clock forward instead of showing a frozen number.
+        XCTAssertEqual(running.elapsedSeconds(asOf: reported), 600, accuracy: 0.01)
+        XCTAssertEqual(running.elapsedSeconds(asOf: reported.addingTimeInterval(45)), 645, accuracy: 0.01)
+
+        var paused = running
+        paused.isPaused = true
+        XCTAssertEqual(paused.elapsedSeconds(asOf: reported.addingTimeInterval(45)), 600, accuracy: 0.01)
+
+        var finishing = running
+        finishing.isFinishing = true
+        XCTAssertEqual(finishing.elapsedSeconds(asOf: reported.addingTimeInterval(45)), 600, accuracy: 0.01)
+    }
+
+    func testLiveSessionEnvelopeRoundTripsActiveAndClearedSessions() throws {
+        let status = WatchLiveSessionStatus(
+            activity: .outdoorRun,
+            isPaused: true,
+            isFinishing: false,
+            elapsedSeconds: 1_234,
+            distanceMeters: 3_000,
+            updatedAt: Date(timeIntervalSince1970: 6_000)
+        )
+
+        let active = try JSONDecoder().decode(
+            WatchLiveSessionEnvelope.self,
+            from: try JSONEncoder().encode(WatchLiveSessionEnvelope(status: status))
+        )
+        XCTAssertEqual(active.status, status)
+
+        // Clearing has to survive the round trip, otherwise the phone keeps
+        // offering Pause and End for a workout that already finished.
+        let cleared = try JSONDecoder().decode(
+            WatchLiveSessionEnvelope.self,
+            from: try JSONEncoder().encode(WatchLiveSessionEnvelope(status: nil))
+        )
+        XCTAssertNil(cleared.status)
+    }
+
+    func testRemoteCommandRawValuesStayStableAcrossDevices() {
+        // These cross the WatchConnectivity boundary as strings, so renaming a
+        // case would silently break control from an older paired build.
+        XCTAssertEqual(WatchWorkoutRemoteCommand.togglePause.rawValue, "togglePause")
+        XCTAssertEqual(WatchWorkoutRemoteCommand.pause.rawValue, "pause")
+        XCTAssertEqual(WatchWorkoutRemoteCommand.resume.rawValue, "resume")
+        XCTAssertEqual(WatchWorkoutRemoteCommand.end.rawValue, "end")
+        XCTAssertEqual(WatchWorkoutRemoteCommand(rawValue: "togglePause"), .togglePause)
+    }
+
     func testAveragePaceMatchesSplitsWhenWorkoutDurationIncludesNonMovingTime() {
         let start = Date(timeIntervalSince1970: 3_000)
         let mile = DistanceUnit.miles.metersPerUnit

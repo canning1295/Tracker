@@ -233,6 +233,37 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         session.end()
     }
 
+    var liveSessionStatus: WatchLiveSessionStatus? {
+        guard isActive, let activity else { return nil }
+        return WatchLiveSessionStatus(
+            activity: activity,
+            isPaused: isPaused,
+            isFinishing: isFinishing,
+            elapsedSeconds: snapshot.elapsedSeconds,
+            distanceMeters: snapshot.distanceMeters
+        )
+    }
+
+    /// Applies a control sent from the phone or the Action Button. A remote end
+    /// keeps every recorded second: auto-trim is a judgement for someone looking
+    /// at the summary, not something to apply from a button press.
+    func applyRemoteCommand(_ command: WatchWorkoutRemoteCommand) {
+        guard isActive, !isFinishing else { return }
+        switch command {
+        case .togglePause:
+            togglePause()
+        case .pause:
+            guard !isPaused else { return }
+            togglePause()
+        case .resume:
+            guard isPaused else { return }
+            togglePause()
+        case .end:
+            _ = prepareToEnd()
+            finishEnd()
+        }
+    }
+
     private func beginStart(activity: WorkoutActivity, interval: IntervalWorkout?) {
         guard !isStarting, !isActive, completedWorkoutSummary == nil else { return }
         self.activity = activity

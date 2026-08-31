@@ -5,11 +5,68 @@ struct SettingsView: View {
     @State private var showsStravaSetup = false
     @State private var isImportingHealthMetrics = false
     @State private var isConnectingStrava = false
+    @State private var isConfirmingWatchEnd = false
 
     var body: some View {
         @Bindable var appState = appState
 
         Form {
+            Section {
+                Toggle("Allow Screen Taps", isOn: Binding(
+                    get: { appState.settings.touchControlsEnabled },
+                    set: { appState.setWatchTouchControlsEnabled($0) }
+                ))
+
+                Toggle("Lock Screen When Workout Starts", isOn: $appState.settings.autoDisableTouchOnWorkoutStart)
+            } header: {
+                Text("Watch Screen")
+            } footer: {
+                Text("Turning off screen taps stops rain and sleeves from hitting Pause or End on the Watch. Turn the Digital Crown on the Watch to unlock, or switch this back on here.")
+            }
+
+            Section {
+                if let session = appState.activeWatchSession {
+                    LabeledContent(session.activity.displayName) {
+                        Text(session.isFinishing ? "Ending" : (session.isPaused ? "Paused" : "Running"))
+                            .foregroundStyle(session.isPaused ? .orange : .green)
+                    }
+
+                    LabeledContent("Elapsed") {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(WorkoutFormatter.duration(session.elapsedSeconds(asOf: context.date)))
+                                .monospacedDigit()
+                        }
+                    }
+
+                    Button {
+                        appState.sendWatchCommand(.togglePause)
+                    } label: {
+                        Label(session.isPaused ? "Resume Workout" : "Pause Workout", systemImage: session.isPaused ? "play.fill" : "pause.fill")
+                    }
+                    .disabled(session.isFinishing)
+
+                    Button(role: .destructive) {
+                        isConfirmingWatchEnd = true
+                    } label: {
+                        Label("End Workout", systemImage: "stop.fill")
+                    }
+                    .disabled(session.isFinishing)
+                } else {
+                    Label("No workout running on Apple Watch", systemImage: "figure.run.circle")
+                        .foregroundStyle(.secondary)
+                }
+
+                if let message = appState.watchControlMessage {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Current Workout")
+            } footer: {
+                Text("Controls appear while a Tracker workout is running and the Watch is reachable. On Apple Watch Ultra, assign \u{201C}Pause or Resume Workout\u{201D} to the Action Button in Watch Settings to pause without the screen.")
+            }
+
             Section("Units") {
                 Picker("Distance", selection: $appState.settings.distanceUnit) {
                     ForEach(DistanceUnit.allCases) { unit in
@@ -27,9 +84,6 @@ struct SettingsView: View {
             }
 
             Section("Watch Controls") {
-                Label("Touch navigation stays on", systemImage: "hand.tap")
-                    .foregroundStyle(.secondary)
-
                 Picker("Announce Every", selection: $appState.settings.splitAnnouncementUnit) {
                     ForEach(WorkoutAnnouncementUnit.allCases) { unit in
                         Text(unit.displayName).tag(unit)
@@ -224,6 +278,18 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .toolbar { EditButton() }
+        .confirmationDialog(
+            "End the workout on your Apple Watch?",
+            isPresented: $isConfirmingWatchEnd,
+            titleVisibility: .visible
+        ) {
+            Button("End Workout", role: .destructive) {
+                appState.sendWatchCommand(.end)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The Watch saves everything recorded so far. This cannot be undone.")
+        }
     }
 
     private func importHealthMetrics() async {
