@@ -872,7 +872,12 @@ enum SplitBuilder {
         guard workout.activity.recordsDistance else { return [] }
         let pauseRanges = WorkoutTimeline.mergedPauseRanges(workout.recordedPauseRanges)
         if workout.route.count > 1 {
-            let routeSplits = routeBasedSplits(points: workout.route, unit: unit, pauseRanges: pauseRanges)
+            let routeSplits = routeBasedSplits(
+                points: workout.route,
+                unit: unit,
+                pauseRanges: pauseRanges,
+                distanceScale: distanceScale(for: workout, pauseRanges: pauseRanges)
+            )
             if !routeSplits.isEmpty {
                 return routeSplits
             }
@@ -881,10 +886,54 @@ enum SplitBuilder {
         return proportionalSplits(for: workout, unit: unit)
     }
 
+    /// Summing GPS points overstates distance -- every fix carries noise, and the
+    /// error only ever adds. Left alone, each "mile" split is short, so every
+    /// split reads faster than the run really was. Splits are measured against
+    /// the workout's recorded distance instead, which comes from sensor fusion
+    /// rather than raw points.
+    ///
+    /// Only noise-sized corrections are applied. A route covering far less than
+    /// the recorded distance is missing data, not drifting, and stretching it
+    /// would invent a workout that never happened.
+    private static func distanceScale(
+        for workout: WorkoutSummary,
+        pauseRanges: [DateRangeValue]
+    ) -> Double {
+        guard workout.distanceMeters > 0 else { return 1 }
+        let accumulated = accumulatedRouteDistance(points: workout.route, pauseRanges: pauseRanges)
+        guard accumulated > 0 else { return 1 }
+        let ratio = workout.distanceMeters / accumulated
+        guard ratio >= 0.85, ratio <= 1.15 else { return 1 }
+        return ratio
+    }
+
+    /// Distance the split walk actually accumulates, which skips paused and
+    /// zero-length segments, so the scale lines up with what the splits measure.
+    private static func accumulatedRouteDistance(
+        points: [RoutePoint],
+        pauseRanges: [DateRangeValue]
+    ) -> Double {
+        let sorted = points.sorted { $0.timestamp < $1.timestamp }
+        var total = 0.0
+        for pair in zip(sorted, sorted.dropFirst()) {
+            let pausedSeconds = WorkoutTimeline.pausedDuration(
+                from: pair.0.timestamp,
+                to: pair.1.timestamp,
+                mergedPauseRanges: pauseRanges
+            )
+            guard pausedSeconds == 0 else { continue }
+            let segmentDistance = PaceCalculator.distanceMeters(between: pair.0, and: pair.1)
+            guard segmentDistance > 0 else { continue }
+            total += segmentDistance
+        }
+        return total
+    }
+
     private static func routeBasedSplits(
         points: [RoutePoint],
         unit: DistanceUnit,
-        pauseRanges: [DateRangeValue]
+        pauseRanges: [DateRangeValue],
+        distanceScale: Double
     ) -> [SplitSummary] {
         let sorted = points.sorted { $0.timestamp < $1.timestamp }
         guard let first = sorted.first, let last = sorted.last, sorted.count > 1 else { return [] }
@@ -904,7 +953,7 @@ enum SplitBuilder {
             )
             guard pausedSeconds == 0 else { continue }
 
-            let segmentDistance = PaceCalculator.distanceMeters(between: pair.0, and: pair.1)
+            let segmentDistance = PaceCalculator.distanceMeters(between: pair.0, and: pair.1) * distanceScale
             guard segmentDistance > 0 else { continue }
 
             let nextCumulativeDistance = cumulativeDistance + segmentDistance

@@ -245,15 +245,19 @@ struct ActivityDetailView: View {
 
     private func metricGrid(workout: WorkoutSummary, splits: [SplitSummary]) -> some View {
         let movingDuration = appState.movingDuration(for: workout)
-        // Only worth splitting the two apart once they actually disagree.
-        let stoppedSeconds = movingDuration.map { workout.duration - $0 } ?? 0
-        let showsMovingTime = stoppedSeconds >= 5
+        // The headline always matches the list, which shows the same value.
+        let displayedDuration = movingDuration ?? workout.duration
+        let stoppedSeconds = workout.duration - displayedDuration
+        // HealthKit's pause bookkeeping and the route's own disagree by a few
+        // seconds on almost every workout. Only break the number apart once the
+        // gap is real stopped time rather than that noise.
+        let showsMovingTime = stoppedSeconds >= 60
 
         return Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
             GridRow {
                 MetricTile(
                     title: showsMovingTime ? "Moving Time" : "Time",
-                    value: WorkoutFormatter.duration(showsMovingTime ? (movingDuration ?? workout.duration) : workout.duration)
+                    value: WorkoutFormatter.duration(displayedDuration)
                 )
                 if workout.activity.recordsDistance {
                     MetricTile(title: "Distance", value: workout.distanceMeters > 0 ? WorkoutFormatter.distance(workout.distanceMeters, unit: appState.settings.distanceUnit) : "--")

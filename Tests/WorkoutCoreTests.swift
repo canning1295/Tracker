@@ -1208,6 +1208,63 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(WatchWorkoutRemoteCommand(rawValue: "togglePause"), .togglePause)
     }
 
+    func testSplitsAreMeasuredAgainstRecordedDistanceNotRawGPSDistance() {
+        let start = Date(timeIntervalSince1970: 3_800)
+        let mile = DistanceUnit.miles.metersPerUnit
+        // GPS noise only ever adds distance: the track measures 2.2% long, which
+        // is what every recorded run on the device showed.
+        let gpsDistance = mile * 2 * 1.022
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(960),
+            duration: 960,
+            distanceMeters: mile * 2,
+            activeEnergyKilocalories: 300,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: gpsDistance, seconds: 960, start: start)
+            ]
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+        let total = splits.reduce(0) { $0 + $1.distanceMeters }
+
+        // Splits must add up to the distance shown beside them, not to the
+        // inflated GPS total, or every split reads faster than the run was.
+        XCTAssertEqual(total, mile * 2, accuracy: 1)
+        XCTAssertEqual(splits.count, 2)
+        XCTAssertEqual(splits[0].paceSecondsPerUnit ?? 0, 480, accuracy: 1)
+
+        let pace = PaceCalculator.averagePaceSecondsPerUnit(for: workout, splits: splits, unit: .miles)
+        XCTAssertEqual(pace ?? 0, 480, accuracy: 1)
+    }
+
+    func testSplitsIgnoreScalingWhenRouteIsMissingRatherThanDrifting() {
+        let start = Date(timeIntervalSince1970: 3_900)
+        let mile = DistanceUnit.miles.metersPerUnit
+        // Half the run has no GPS. Stretching it to fit would invent a workout
+        // twice as fast as the one that happened.
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_920),
+            duration: 1_920,
+            distanceMeters: mile * 4,
+            activeEnergyKilocalories: 400,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: mile * 2, seconds: 960, start: start)
+            ]
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+        let total = splits.reduce(0) { $0 + $1.distanceMeters }
+
+        XCTAssertEqual(total, mile * 2, accuracy: 1)
+        XCTAssertNil(PaceCalculator.movingDuration(for: workout, splits: splits, unit: .miles))
+    }
+
     func testMovingDurationExcludesTimeThatCoveredNoDistance() {
         let start = Date(timeIntervalSince1970: 3_400)
         let mile = DistanceUnit.miles.metersPerUnit
