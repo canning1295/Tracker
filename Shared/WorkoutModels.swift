@@ -226,7 +226,7 @@ struct WorkoutSettings: Codable, Equatable {
         paceMode: .rolling,
         rollingPaceSeconds: 30,
         touchControlsEnabled: true,
-        autoDisableTouchOnWorkoutStart: true,
+        autoDisableTouchOnWorkoutStart: false,
         outdoorOrder: WorkoutActivity.defaultOutdoorOrder,
         indoorOrder: WorkoutActivity.defaultIndoorOrder,
         heartRate: HeartRateSettings(maxHeartRate: 190),
@@ -241,7 +241,7 @@ struct WorkoutSettings: Codable, Equatable {
         paceMode: PaceMode,
         rollingPaceSeconds: Int,
         touchControlsEnabled: Bool = true,
-        autoDisableTouchOnWorkoutStart: Bool = true,
+        autoDisableTouchOnWorkoutStart: Bool = false,
         outdoorOrder: [WorkoutActivity],
         indoorOrder: [WorkoutActivity],
         heartRate: HeartRateSettings,
@@ -286,7 +286,7 @@ struct WorkoutSettings: Codable, Equatable {
         paceMode = try container.decodeIfPresent(PaceMode.self, forKey: .paceMode) ?? .rolling
         rollingPaceSeconds = try container.decodeIfPresent(Int.self, forKey: .rollingPaceSeconds) ?? 30
         touchControlsEnabled = try container.decodeIfPresent(Bool.self, forKey: .touchControlsEnabled) ?? true
-        autoDisableTouchOnWorkoutStart = try container.decodeIfPresent(Bool.self, forKey: .autoDisableTouchOnWorkoutStart) ?? true
+        autoDisableTouchOnWorkoutStart = try container.decodeIfPresent(Bool.self, forKey: .autoDisableTouchOnWorkoutStart) ?? false
         outdoorOrder = try container.decodeIfPresent([WorkoutActivity].self, forKey: .outdoorOrder) ?? WorkoutActivity.defaultOutdoorOrder
         indoorOrder = try container.decodeIfPresent([WorkoutActivity].self, forKey: .indoorOrder) ?? WorkoutActivity.defaultIndoorOrder
         heartRate = try container.decodeIfPresent(HeartRateSettings.self, forKey: .heartRate) ?? HeartRateSettings(maxHeartRate: 190)
@@ -312,6 +312,29 @@ struct WorkoutControlPresentation: Equatable {
         endTitle = isFinishing ? "Saving" : "End"
         endSystemImage = isFinishing ? "hourglass" : "stop.fill"
         isEndEnabled = !isFinishing
+    }
+}
+
+enum GPSReadiness: Equatable {
+    case checking
+    case requestingPermission
+    case unavailable(String)
+    case acquiring(accuracyMeters: Double?)
+    case ready(accuracyMeters: Double)
+
+    static let readyAccuracyMeters = 10.0
+
+    static func measured(horizontalAccuracy: Double?) -> GPSReadiness {
+        guard let horizontalAccuracy,
+              horizontalAccuracy.isFinite,
+              horizontalAccuracy >= 0 else {
+            return .acquiring(accuracyMeters: nil)
+        }
+
+        if horizontalAccuracy <= readyAccuracyMeters {
+            return .ready(accuracyMeters: horizontalAccuracy)
+        }
+        return .acquiring(accuracyMeters: horizontalAccuracy)
     }
 }
 
@@ -965,6 +988,7 @@ struct WorkoutMetricSnapshot: Equatable {
     var elapsedSeconds: TimeInterval = 0
     var heartRate: Int?
     var distanceMeters: Double = 0
+    var distanceIsEstimated = false
     var activeEnergyKilocalories: Double = 0
     var paceSecondsPerUnit: Double?
     var route: [RoutePoint] = []

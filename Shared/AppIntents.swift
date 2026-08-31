@@ -60,52 +60,8 @@ struct StartWorkoutIntent: AppIntent {
     }
 }
 
-struct TouchOnIntent: AppIntent {
-    static var title: LocalizedStringResource = "Touch On"
-    static var description = IntentDescription("Enable touch controls in Tracker.")
-    static var openAppWhenRun = false
-
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        TrackerSettingsWriter.setTouchControlsEnabled(true)
-        return .result(dialog: "Touch controls are on in Tracker.")
-    }
-}
-
-struct TouchOffIntent: AppIntent {
-    static var title: LocalizedStringResource = "Touch Off"
-    static var description = IntentDescription("Disable touch controls in Tracker.")
-    static var openAppWhenRun = false
-
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        TrackerSettingsWriter.setTouchControlsEnabled(false)
-        return .result(dialog: "Touch controls are off in Tracker.")
-    }
-}
-
 struct TrackerShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
-        AppShortcut(
-            intent: TouchOnIntent(),
-            phrases: [
-                "Touch on in \(.applicationName)",
-                "Turn touch on in \(.applicationName)",
-                "Enable touch in \(.applicationName)"
-            ],
-            shortTitle: "Touch On",
-            systemImageName: "hand.tap"
-        )
-
-        AppShortcut(
-            intent: TouchOffIntent(),
-            phrases: [
-                "Touch off in \(.applicationName)",
-                "Turn touch off in \(.applicationName)",
-                "Disable touch in \(.applicationName)"
-            ],
-            shortTitle: "Touch Off",
-            systemImageName: "hand.raised.slash"
-        )
-
         AppShortcut(
             intent: StartWorkoutIntent(activity: .outdoorRun),
             phrases: [

@@ -41,12 +41,6 @@ struct ActiveWorkoutView: View {
                 )
                     .tag(controlsTag)
             }
-            .allowsHitTesting(watchState.settings.touchControlsEnabled)
-
-            if !watchState.settings.touchControlsEnabled {
-                TouchControlsLockedOverlay()
-                    .allowsHitTesting(false)
-            }
 
             if let endPrompt {
                 switch endPrompt {
@@ -72,11 +66,8 @@ struct ActiveWorkoutView: View {
         }
         .tabViewStyle(.page(indexDisplayMode: .always))
         .navigationBarBackButtonHidden(true)
-        .onChange(of: watchState.settings.touchControlsEnabled) { _, isEnabled in
-            if !isEnabled {
-                page = 0
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
+        ._statusBarHidden(true)
     }
 
     private var hasOutdoorMap: Bool {
@@ -132,56 +123,63 @@ struct WatchWorkoutSummaryView: View {
     ]
 
     var body: some View {
-        VStack(spacing: 7) {
-            statusSymbol
+        ScrollView(.vertical, showsIndicators: true) {
+            VStack(spacing: 7) {
+                statusSymbol
 
-            Text(statusTitle)
-                .font(.headline)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                Text(statusTitle)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
 
-            Text(summary.activity?.displayName ?? "Workout")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(summary.activity?.displayName ?? "Workout")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
-            if case .failed(let message) = summary.saveState {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
-            }
+                if case .failed(let message) = summary.saveState {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.7)
+                }
 
-            ScrollView {
                 LazyVGrid(columns: columns, spacing: 8) {
-                    WatchSummaryMetric(title: "Time", value: WorkoutFormatter.duration(summary.elapsedSeconds))
-                    WatchSummaryMetric(title: "Act Cal", value: WorkoutFormatter.activeCalories(summary.activeEnergyKilocalories))
+                    WatchSummaryMetric(title: "Time", value: WorkoutFormatter.duration(summary.elapsedSeconds), color: .blue)
+                    WatchSummaryMetric(title: "Act Cal", value: WorkoutFormatter.activeCalories(summary.activeEnergyKilocalories), color: .pink)
 
                     if summary.activity?.recordsDistance == true {
                         WatchSummaryMetric(
-                            title: "Distance",
-                            value: WorkoutFormatter.distance(summary.distanceMeters, unit: settings.distanceUnit)
+                            title: summary.distanceIsEstimated ? "Est Distance" : "Distance",
+                            value: WorkoutFormatter.distance(summary.distanceMeters, unit: settings.distanceUnit),
+                            color: .cyan
                         )
                         WatchSummaryMetric(
-                            title: "Pace",
-                            value: WorkoutFormatter.pace(summaryPace, unit: settings.distanceUnit)
+                            title: summary.distanceIsEstimated ? "Est Pace" : "Pace",
+                            value: WorkoutFormatter.pace(summaryPace, unit: settings.distanceUnit),
+                            color: .purple
                         )
                     }
                 }
-            }
 
-            Button(action: onDismiss) {
-                Label("Done", systemImage: "checkmark")
-                    .frame(maxWidth: .infinity)
+                Button(action: onDismiss) {
+                    Label("Done", systemImage: "checkmark")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.indigo)
+                .disabled(summary.saveState == .saving)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(summary.saveState == .saving)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .defaultScrollAnchor(.bottom)
+        .focusable(false)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
+        ._statusBarHidden(true)
         .accessibilityAddTraits(.isModal)
     }
 
@@ -222,6 +220,7 @@ struct WatchWorkoutSummaryView: View {
 private struct WatchSummaryMetric: View {
     let title: String
     let value: String
+    let color: Color
 
     var body: some View {
         VStack(spacing: 2) {
@@ -234,24 +233,12 @@ private struct WatchSummaryMetric: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
         }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private struct TouchControlsLockedOverlay: View {
-    var body: some View {
-        VStack {
-            Label("Touch Off", systemImage: "hand.raised.slash.fill")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.orange)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(.thinMaterial, in: Capsule())
-            Spacer()
+        .frame(maxWidth: .infinity, minHeight: 43)
+        .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(color.opacity(0.28), lineWidth: 1)
         }
-        .padding(.top, 4)
     }
 }
 
@@ -265,43 +252,83 @@ struct WatchMetricsPage: View {
 
     var body: some View {
         let controls = WorkoutControlPresentation(isPaused: isPaused, isFinishing: isFinishing)
+        let compactLayout = interval != nil
+        let rowSpacing: CGFloat = compactLayout ? 5 : 6
+        let metricHeight: CGFloat = compactLayout ? 37 : 47
 
-        VStack(spacing: 6) {
-            if let statusText = controls.statusText {
-                Text(statusText)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(isFinishing ? Color.secondary : Color.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.thinMaterial, in: Capsule())
-            }
-
-            Text(WorkoutFormatter.duration(snapshot.elapsedSeconds))
-                .font(.system(size: 30, weight: .semibold, design: .rounded))
-                .monospacedDigit()
+        VStack(spacing: 3) {
+            clockHeader(controls: controls, compactLayout: compactLayout)
+                .offset(y: -6)
 
             if let interval {
                 WatchIntervalProgressPanel(progress: IntervalTimeline.progress(for: interval, elapsedSeconds: snapshot.elapsedSeconds))
             }
 
             if showsDistanceAndPace {
-                HStack {
-                    MetricBlock(title: "HR", value: heartRateDisplay.valueText, color: heartRateDisplay.color)
-                    MetricBlock(title: "Dist", value: WorkoutFormatter.distance(snapshot.distanceMeters, unit: settings.distanceUnit), color: .primary)
+                HStack(spacing: rowSpacing) {
+                    MetricBlock(title: "HR", value: heartRateDisplay.valueText, color: heartRateDisplay.color, minHeight: metricHeight)
+                    MetricBlock(
+                        title: snapshot.distanceIsEstimated ? "Est Dist" : "Distance",
+                        value: WorkoutFormatter.distance(snapshot.distanceMeters, unit: settings.distanceUnit),
+                        color: .cyan,
+                        minHeight: metricHeight
+                    )
                 }
 
-                HStack {
-                    MetricBlock(title: "Pace", value: WorkoutFormatter.pace(snapshot.paceSecondsPerUnit, unit: settings.distanceUnit), color: .primary)
-                    MetricBlock(title: "Act Cal", value: activeCaloriesText, color: .primary)
+                HStack(spacing: rowSpacing) {
+                    MetricBlock(
+                        title: snapshot.distanceIsEstimated ? "Est Pace" : "Pace",
+                        value: WorkoutFormatter.pace(snapshot.paceSecondsPerUnit, unit: settings.distanceUnit),
+                        color: .purple,
+                        minHeight: metricHeight
+                    )
+                    MetricBlock(title: "Act Cal", value: activeCaloriesText, color: .pink, minHeight: metricHeight)
                 }
             } else {
+                HStack(spacing: rowSpacing) {
+                    MetricBlock(title: "HR", value: heartRateDisplay.valueText, color: heartRateDisplay.color, minHeight: metricHeight)
+                    MetricBlock(title: "Act Cal", value: activeCaloriesText, color: .pink, minHeight: metricHeight)
+                }
+            }
+
+            Text(WorkoutFormatter.duration(snapshot.elapsedSeconds))
+                .font(.system(size: compactLayout ? 23 : 28, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .accessibilityLabel("Workout time")
+                .offset(y: 6)
+        }
+        .padding(.horizontal, 9)
+        .padding(.top, 1)
+        .padding(.bottom, compactLayout ? 3 : 7)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func clockHeader(controls: WorkoutControlPresentation, compactLayout: Bool) -> some View {
+        ZStack {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(context.date, style: .time)
+                    .font(.system(size: compactLayout ? 23 : 28, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityLabel("Current time")
+            }
+
+            if let statusText = controls.statusText {
                 HStack {
-                    MetricBlock(title: "HR", value: heartRateDisplay.valueText, color: heartRateDisplay.color)
-                    MetricBlock(title: "Act Cal", value: activeCaloriesText, color: .primary)
+                    Spacer()
+                    Text(statusText)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(isFinishing ? Color.secondary : Color.yellow)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.thinMaterial, in: Capsule())
                 }
             }
         }
-        .padding(.horizontal, 8)
+        .frame(height: compactLayout ? 26 : 30)
     }
 
     private var activeCaloriesText: String {
@@ -374,6 +401,7 @@ private struct MetricBlock: View {
     let title: String
     let value: String
     let color: Color
+    var minHeight: CGFloat = 48
 
     var body: some View {
         VStack(spacing: 2) {
@@ -387,7 +415,12 @@ private struct MetricBlock: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, minHeight: minHeight)
+        .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .stroke(color.opacity(0.26), lineWidth: 1)
+        }
     }
 }
 
@@ -435,7 +468,7 @@ struct WatchMapPage: View {
         Map(position: $position, interactionModes: focused ? [.zoom, .pan] : []) {
             if routeCoordinates.count > 1 {
                 MapPolyline(coordinates: routeCoordinates)
-                    .stroke(.orange, lineWidth: 4)
+                    .stroke(.cyan, lineWidth: 4)
             }
 
             if let currentCoordinate {
@@ -529,7 +562,6 @@ private extension HeartRateDisplayPresentation {
 
 struct WatchControlsPage: View {
     @EnvironmentObject private var workoutManager: WorkoutSessionManager
-    @EnvironmentObject private var watchState: WatchAppState
     let onPauseResume: () -> Void
     let onRequestEnd: () -> Void
 
@@ -539,36 +571,50 @@ struct WatchControlsPage: View {
             isFinishing: workoutManager.isFinishing
         )
 
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             Button {
                 onPauseResume()
             } label: {
                 Label(controls.pauseTitle, systemImage: controls.pauseSystemImage)
+                    .font(.title3.weight(.bold))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(pauseGradient, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
             .disabled(!controls.isPauseEnabled)
 
             Button(role: .destructive) {
                 onRequestEnd()
             } label: {
                 Label(controls.endTitle, systemImage: controls.endSystemImage)
+                    .font(.title3.weight(.bold))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(endGradient, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
             .disabled(!controls.isEndEnabled)
-
-            Button {
-                watchState.setTouchControlsEnabled(!watchState.settings.touchControlsEnabled)
-            } label: {
-                Label(touchTitle, systemImage: touchSystemImage)
-            }
         }
-        .buttonStyle(.bordered)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var touchTitle: String {
-        watchState.settings.touchControlsEnabled ? "Touch Off" : "Touch On"
+    private var pauseGradient: LinearGradient {
+        LinearGradient(
+            colors: workoutManager.isPaused ? [.green, .cyan] : [.blue, .purple],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 
-    private var touchSystemImage: String {
-        watchState.settings.touchControlsEnabled ? "hand.raised.slash" : "hand.tap"
+    private var endGradient: LinearGradient {
+        LinearGradient(colors: [.pink, .red], startPoint: .leading, endPoint: .trailing)
     }
 }
 

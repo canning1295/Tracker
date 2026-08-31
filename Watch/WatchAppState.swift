@@ -151,13 +151,6 @@ final class WatchAppState: NSObject, ObservableObject, WCSessionDelegate {
         requestedStartActivity = nil
     }
 
-    func setTouchControlsEnabled(_ enabled: Bool) {
-        guard settings.touchControlsEnabled != enabled else { return }
-        settings.touchControlsEnabled = enabled
-        store.saveSettings(settings)
-        sendSettingsToPhone()
-    }
-
     private func receiveStartPayload(_ payload: [String: Any]) {
         guard let data = payload[WatchConnectivityPayloadKey.startActivity] as? Data,
               let activity = try? JSONDecoder().decode(WorkoutActivity.self, from: data) else {

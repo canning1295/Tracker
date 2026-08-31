@@ -106,6 +106,108 @@ struct HeartRateDisplayPresentation: Equatable {
     }
 }
 
+enum IndoorDistanceEstimator {
+    static let personalAnchorHeartRate = 110
+
+    static func anchorPaceMinutesPerMile(for activity: WorkoutActivity) -> Double? {
+        switch activity {
+        case .indoorRun:
+            return 12
+        case .indoorWalk:
+            return 20
+        case .indoorElliptical:
+            return 15
+        case .indoorBike:
+            return 5
+        case .outdoorRun, .outdoorWalk, .outdoorBike, .weights:
+            return nil
+        }
+    }
+
+    static func estimatedDistanceMeters(
+        activity: WorkoutActivity,
+        elapsedSeconds: TimeInterval,
+        averageHeartRate: Int?,
+        heartRateSettings: HeartRateSettings,
+        restingHeartRate: Int?
+    ) -> Double {
+        guard elapsedSeconds > 0,
+              let averageHeartRate,
+              averageHeartRate > 0,
+              let paceMinutesPerMile = anchorPaceMinutesPerMile(for: activity),
+              paceMinutesPerMile > 0 else {
+            return 0
+        }
+
+        let anchorMetersPerSecond = DistanceUnit.miles.metersPerUnit / (paceMinutesPerMile * 60)
+        let personalRestingHeartRate = normalizedRestingHeartRate(
+            restingHeartRate,
+            maxHeartRate: heartRateSettings.maxHeartRate
+        )
+        let anchorEffort = effortScore(
+            heartRate: personalAnchorHeartRate,
+            restingHeartRate: personalRestingHeartRate,
+            settings: heartRateSettings
+        )
+        let currentEffort = effortScore(
+            heartRate: averageHeartRate,
+            restingHeartRate: personalRestingHeartRate,
+            settings: heartRateSettings
+        )
+        guard anchorEffort > 0, currentEffort > 0 else { return 0 }
+
+        let speedScale = min(max(currentEffort / anchorEffort, 0), 1.8)
+        return anchorMetersPerSecond * speedScale * elapsedSeconds
+    }
+
+    private static func normalizedRestingHeartRate(_ restingHeartRate: Int?, maxHeartRate: Int) -> Int {
+        let safeMaximum = max(maxHeartRate, personalAnchorHeartRate + 20)
+        return min(max(restingHeartRate ?? 60, 35), min(personalAnchorHeartRate - 10, safeMaximum - 20))
+    }
+
+    private static func effortScore(
+        heartRate: Int,
+        restingHeartRate: Int,
+        settings: HeartRateSettings
+    ) -> Double {
+        let maximum = max(settings.maxHeartRate, restingHeartRate + 20)
+        let reserveRange = Double(maximum - restingHeartRate)
+        let reserveFraction = min(
+            max(Double(heartRate - restingHeartRate) / reserveRange, 0),
+            1
+        )
+        guard reserveFraction > 0 else { return 0 }
+
+        let configured = settings.zoneBoundaries
+        let defaults = [0.50, 0.60, 0.70, 0.80, 0.90]
+        let zoneBoundaries: [Double]
+        if configured.count >= defaults.count {
+            let values = Array(configured.prefix(defaults.count))
+            let areValid = values.allSatisfy { $0 > 0 && $0 < 1 } &&
+                zip(values, values.dropFirst()).allSatisfy { $0 < $1 }
+            zoneBoundaries = areValid ? values : defaults
+        } else {
+            zoneBoundaries = defaults
+        }
+
+        let restingFraction = Double(restingHeartRate) / Double(maximum)
+        let reserveBreakpoints = [0.0] + zoneBoundaries.map { boundary in
+            min(max((boundary - restingFraction) / (1 - restingFraction), 0), 1)
+        } + [1.0]
+        let effortValues = [0.0, 0.65, 0.85, 1.05, 1.30, 1.60, 1.80]
+
+        for index in 1..<reserveBreakpoints.count {
+            let lower = reserveBreakpoints[index - 1]
+            let upper = reserveBreakpoints[index]
+            guard reserveFraction <= upper || index == reserveBreakpoints.count - 1 else { continue }
+            guard upper > lower else { return effortValues[index] }
+            let progress = min(max((reserveFraction - lower) / (upper - lower), 0), 1)
+            return effortValues[index - 1] + (effortValues[index] - effortValues[index - 1]) * progress
+        }
+        return effortValues.last ?? 0
+    }
+}
+
 struct HeartRateSampleSummary: Equatable {
     var average: Int?
     var maximum: Int?

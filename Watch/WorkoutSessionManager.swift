@@ -34,6 +34,7 @@ struct WatchWorkoutCompletionSummary: Identifiable, Equatable {
     var activity: WorkoutActivity?
     var elapsedSeconds: TimeInterval
     var distanceMeters: Double
+    var distanceIsEstimated: Bool
     var activeEnergyKilocalories: Double
     var saveState: SaveState
 }
@@ -48,6 +49,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     @Published private(set) var isFinishing = false
     @Published private(set) var startStatus: WorkoutStartStatus?
     @Published private(set) var completedWorkoutSummary: WatchWorkoutCompletionSummary?
+    @Published private(set) var gpsReadiness: GPSReadiness = .checking
 
     private let healthStore = HKHealthStore()
     private var session: HKWorkoutSession?
@@ -59,7 +61,13 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     private var activeSegmentStartDate: Date?
     private var accumulatedActiveSeconds: TimeInterval = 0
     private var lastAcceptedLocationDate: Date?
+    private var lastGPSFixDate: Date?
+    private var lastGPSAccuracyMeters: Double?
+    private var shouldAcquireLocation = false
+    private var gpsReadinessTimer: Timer?
     private var hasLiveHealthKitDistance = false
+    private var didAddEstimatedDistanceSample = false
+    private var lastIndoorEstimateElapsedSeconds: TimeInterval = 0
     private var timer: Timer?
     private var distanceUnit: DistanceUnit = .miles
     private var splitAnnouncementUnit: WorkoutAnnouncementUnit = .miles
@@ -67,6 +75,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     private var splitAnnouncementTracker = DistanceSplitAnnouncementTracker()
     private var paceMode: PaceMode = .rolling
     private var rollingPaceSeconds = 30
+    private var heartRateSettings = WorkoutSettings.defaults.heartRate
+    private var restingHeartRate: Int?
     private var lastPaceRefreshElapsedSeconds: TimeInterval?
     private var lastIntervalCueID: String?
     private var pendingTrimEndSeconds: TimeInterval = 0
@@ -85,6 +95,39 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         beginStart(activity: activity, interval: nil)
     }
 
+    func beginLocationAcquisition() {
+        shouldAcquireLocation = true
+
+        guard CLLocationManager.locationServicesEnabled() else {
+            gpsReadiness = .unavailable("Location Services are off")
+            return
+        }
+
+        switch locationManager.authorizationStatus {
+        case .notDetermined:
+            gpsReadiness = .requestingPermission
+            locationManager.requestWhenInUseAuthorization()
+        case .restricted, .denied:
+            gpsReadiness = .unavailable("Location access is off")
+        case .authorizedAlways, .authorizedWhenInUse:
+            refreshGPSReadinessForAcquisition()
+            if !isActive || (activity?.environment == .outdoor && !isPaused) {
+                locationManager.startUpdatingLocation()
+            }
+            startGPSReadinessTimer()
+        @unknown default:
+            gpsReadiness = .unavailable("Location permission is unavailable")
+        }
+    }
+
+    func stopPreworkoutLocationAcquisition() {
+        guard !isActive else { return }
+        shouldAcquireLocation = false
+        locationManager.stopUpdatingLocation()
+        gpsReadinessTimer?.invalidate()
+        gpsReadinessTimer = nil
+    }
+
     func updateSettings(_ settings: WorkoutSettings) {
         let paceConfigurationChanged = distanceUnit != settings.distanceUnit ||
             paceMode != settings.paceMode ||
@@ -93,6 +136,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         splitAnnouncementUnit = settings.splitAnnouncementUnit
         paceMode = settings.paceMode
         rollingPaceSeconds = settings.rollingPaceSeconds
+        heartRateSettings = settings.heartRate
+        restingHeartRate = settings.userMetrics.restingHeartRate
         if paceConfigurationChanged {
             lastPaceRefreshElapsedSeconds = nil
             updatePace(force: true)
@@ -112,6 +157,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         completedWorkoutSummary = nil
         activity = nil
         snapshot = .empty
+        beginLocationAcquisition()
     }
 
     func togglePause() {
@@ -158,6 +204,9 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         }
         locationManager.stopUpdatingLocation()
         locationManager.stopUpdatingHeading()
+        shouldAcquireLocation = false
+        gpsReadinessTimer?.invalidate()
+        gpsReadinessTimer = nil
         timer?.invalidate()
         timer = nil
 
@@ -230,8 +279,16 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             self.builder = builder
 
             if activity.environment == .outdoor {
+                gpsReadinessTimer?.invalidate()
+                gpsReadinessTimer = nil
                 routeBuilder = HKWorkoutRouteBuilder(healthStore: healthStore, device: .local())
                 startOutdoorLocationUpdatesIfAvailable()
+            } else {
+                shouldAcquireLocation = false
+                locationManager.stopUpdatingLocation()
+                locationManager.stopUpdatingHeading()
+                gpsReadinessTimer?.invalidate()
+                gpsReadinessTimer = nil
             }
 
             let start = Date()
@@ -241,6 +298,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             accumulatedActiveSeconds = 0
             lastAcceptedLocationDate = nil
             hasLiveHealthKitDistance = false
+            didAddEstimatedDistanceSample = false
+            lastIndoorEstimateElapsedSeconds = 0
             lastPaceRefreshElapsedSeconds = nil
             lastIntervalCueID = initialIntervalCueID()
             activeSplitAnnouncementUnit = splitAnnouncementUnit.distanceUnit
@@ -248,6 +307,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             pendingTrimEndSeconds = 0
             pendingTrimmedDistanceMeters = nil
             snapshot = .empty
+            snapshot.distanceIsEstimated = activity.environment == .indoor &&
+                IndoorDistanceEstimator.anchorPaceMinutesPerMile(for: activity) != nil
             isActive = true
             isStarting = false
             isFinishing = false
@@ -342,20 +403,45 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
     }
 
     private func startOutdoorLocationUpdatesIfAvailable() {
+        shouldAcquireLocation = true
         switch locationManager.authorizationStatus {
         case .notDetermined:
             startStatus = .warning("Allow location for route recording")
+            gpsReadiness = .requestingPermission
             locationManager.requestWhenInUseAuthorization()
         case .restricted, .denied:
             startStatus = .warning("Location is off, route will not be recorded")
+            gpsReadiness = .unavailable("Location access is off")
             return
         case .authorizedAlways, .authorizedWhenInUse:
+            refreshGPSReadinessForAcquisition()
             locationManager.startUpdatingLocation()
             if CLLocationManager.headingAvailable() {
                 locationManager.startUpdatingHeading()
             }
         @unknown default:
             startStatus = .warning("Location permission is unknown")
+            gpsReadiness = .unavailable("Location permission is unavailable")
+        }
+    }
+
+    private func refreshGPSReadinessForAcquisition() {
+        guard let lastGPSFixDate,
+              Date().timeIntervalSince(lastGPSFixDate) <= 15 else {
+            gpsReadiness = .acquiring(accuracyMeters: nil)
+            return
+        }
+        gpsReadiness = .measured(horizontalAccuracy: lastGPSAccuracyMeters)
+    }
+
+    private func startGPSReadinessTimer() {
+        gpsReadinessTimer?.invalidate()
+        guard !isActive else { return }
+        gpsReadinessTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            guard let self, self.shouldAcquireLocation, !self.isActive else { return }
+            DispatchQueue.main.async {
+                self.refreshGPSReadinessForAcquisition()
+            }
         }
     }
 
@@ -364,7 +450,9 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             guard let self, self.isActive else { return }
             DispatchQueue.main.async {
-                self.snapshot.elapsedSeconds = self.activeElapsed(at: Date())
+                let elapsedSeconds = self.activeElapsed(at: Date())
+                self.snapshot.elapsedSeconds = elapsedSeconds
+                self.updateIndoorDistanceEstimate(elapsedSeconds: elapsedSeconds)
                 self.updatePace()
                 self.updateIntervalCue()
             }
@@ -473,6 +561,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
 
         guard let activity, activity.recordsDistance, let distanceIdentifier = activity.distanceQuantityIdentifier else {
             snapshot.distanceMeters = 0
+            snapshot.distanceIsEstimated = false
             snapshot.paceSecondsPerUnit = nil
             return
         }
@@ -480,9 +569,37 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         if let type = HKQuantityType.quantityType(forIdentifier: distanceIdentifier),
            let statistics = builder.statistics(for: type),
            let quantity = statistics.sumQuantity() {
-            hasLiveHealthKitDistance = true
-            snapshot.distanceMeters = quantity.doubleValue(for: .meter())
+            let measuredDistanceMeters = quantity.doubleValue(for: .meter())
+            if measuredDistanceMeters > 0, !didAddEstimatedDistanceSample {
+                hasLiveHealthKitDistance = true
+                snapshot.distanceMeters = measuredDistanceMeters
+                snapshot.distanceIsEstimated = false
+            }
         }
+        updateDistanceAnnouncements()
+    }
+
+    private func updateIndoorDistanceEstimate(elapsedSeconds: TimeInterval) {
+        guard let activity,
+              activity.environment == .indoor,
+              activity.recordsDistance,
+              !hasLiveHealthKitDistance,
+              !didAddEstimatedDistanceSample,
+              let heartRate = snapshot.heartRate else {
+            return
+        }
+
+        let additionalSeconds = max(0, elapsedSeconds - lastIndoorEstimateElapsedSeconds)
+        guard additionalSeconds > 0 else { return }
+        lastIndoorEstimateElapsedSeconds = elapsedSeconds
+        snapshot.distanceMeters += IndoorDistanceEstimator.estimatedDistanceMeters(
+            activity: activity,
+            elapsedSeconds: additionalSeconds,
+            averageHeartRate: heartRate,
+            heartRateSettings: heartRateSettings,
+            restingHeartRate: restingHeartRate
+        )
+        snapshot.distanceIsEstimated = true
         updateDistanceAnnouncements()
     }
 
@@ -513,6 +630,59 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         }
 
         let collectionEndDate = endDecisionDate ?? Date()
+        addEstimatedDistanceSampleIfNeeded(
+            to: builder,
+            collectionEndDate: collectionEndDate
+        ) { [weak self] in
+            self?.endCollection(
+                builder,
+                collectionEndDate: collectionEndDate,
+                endedActivity: endedActivity
+            )
+        }
+    }
+
+    private func addEstimatedDistanceSampleIfNeeded(
+        to builder: HKLiveWorkoutBuilder,
+        collectionEndDate: Date,
+        completion: @escaping () -> Void
+    ) {
+        guard snapshot.distanceIsEstimated,
+              snapshot.distanceMeters > 0,
+              let activity,
+              let startDate,
+              let distanceIdentifier = activity.distanceQuantityIdentifier,
+              let distanceType = HKQuantityType.quantityType(forIdentifier: distanceIdentifier) else {
+            completion()
+            return
+        }
+
+        didAddEstimatedDistanceSample = true
+        let sample = HKQuantitySample(
+            type: distanceType,
+            quantity: HKQuantity(unit: .meter(), doubleValue: snapshot.distanceMeters),
+            start: startDate,
+            end: collectionEndDate,
+            metadata: [
+                "com.toby.Tracker.distanceEstimated": true,
+                "com.toby.Tracker.distanceAnchorHeartRate": IndoorDistanceEstimator.personalAnchorHeartRate
+            ]
+        )
+        builder.add([sample]) { [weak self] success, _ in
+            if !success {
+                DispatchQueue.main.async {
+                    self?.didAddEstimatedDistanceSample = false
+                }
+            }
+            completion()
+        }
+    }
+
+    private func endCollection(
+        _ builder: HKLiveWorkoutBuilder,
+        collectionEndDate: Date,
+        endedActivity: WorkoutActivity?
+    ) {
         builder.endCollection(withEnd: collectionEndDate) { [weak self] success, error in
             guard let self else { return }
             guard success else {
@@ -581,6 +751,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
                 activity: activity,
                 elapsedSeconds: elapsedSeconds,
                 distanceMeters: distanceMeters,
+                distanceIsEstimated: snapshot.distanceIsEstimated,
                 activeEnergyKilocalories: activeEnergyKilocalories,
                 saveState: .saving
             )
@@ -588,6 +759,7 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
             completedWorkoutSummary?.activity = activity
             completedWorkoutSummary?.elapsedSeconds = elapsedSeconds
             completedWorkoutSummary?.distanceMeters = distanceMeters
+            completedWorkoutSummary?.distanceIsEstimated = snapshot.distanceIsEstimated
             completedWorkoutSummary?.activeEnergyKilocalories = activeEnergyKilocalories
         }
     }
@@ -613,6 +785,8 @@ final class WorkoutSessionManager: NSObject, ObservableObject {
         accumulatedActiveSeconds = 0
         lastAcceptedLocationDate = nil
         hasLiveHealthKitDistance = false
+        didAddEstimatedDistanceSample = false
+        lastIndoorEstimateElapsedSeconds = 0
         lastPaceRefreshElapsedSeconds = nil
         lastIntervalCueID = nil
         pendingTrimEndSeconds = 0
@@ -716,6 +890,17 @@ extension WorkoutSessionManager: HKLiveWorkoutBuilderDelegate {
 
 extension WorkoutSessionManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let latestLocation = locations
+            .filter({ $0.horizontalAccuracy.isFinite && $0.horizontalAccuracy >= 0 })
+            .max(by: { $0.timestamp < $1.timestamp }) {
+            DispatchQueue.main.async {
+                guard self.shouldAcquireLocation || self.activity?.environment == .outdoor else { return }
+                self.lastGPSFixDate = latestLocation.timestamp
+                self.lastGPSAccuracyMeters = latestLocation.horizontalAccuracy
+                self.gpsReadiness = .measured(horizontalAccuracy: latestLocation.horizontalAccuracy)
+            }
+        }
+
         guard isActive, !isPaused, let activeSegmentStartDate else { return }
         let accepted = locations.filter { location in
             location.horizontalAccuracy >= 0 &&
@@ -758,11 +943,16 @@ extension WorkoutSessionManager: CLLocationManagerDelegate {
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         DispatchQueue.main.async {
-            guard self.activity?.environment == .outdoor else { return }
             switch manager.authorizationStatus {
             case .authorizedAlways, .authorizedWhenInUse:
-                if self.isActive, !self.isPaused {
+                if self.shouldAcquireLocation || (self.activity?.environment == .outdoor && self.isActive && !self.isPaused) {
+                    self.refreshGPSReadinessForAcquisition()
                     manager.startUpdatingLocation()
+                    if !self.isActive {
+                        self.startGPSReadinessTimer()
+                    }
+                }
+                if self.activity?.environment == .outdoor, self.isActive, !self.isPaused {
                     if CLLocationManager.headingAvailable() {
                         manager.startUpdatingHeading()
                     }
@@ -771,11 +961,31 @@ extension WorkoutSessionManager: CLLocationManagerDelegate {
                     self.startStatus = nil
                 }
             case .restricted, .denied:
-                self.startStatus = .warning("Location is off, route will not be recorded")
+                self.gpsReadiness = .unavailable("Location access is off")
+                if self.activity?.environment == .outdoor {
+                    self.startStatus = .warning("Location is off, route will not be recorded")
+                }
             case .notDetermined:
+                if self.shouldAcquireLocation {
+                    self.gpsReadiness = .requestingPermission
+                }
                 break
             @unknown default:
-                self.startStatus = .warning("Location permission is unknown")
+                self.gpsReadiness = .unavailable("Location permission is unavailable")
+                if self.activity?.environment == .outdoor {
+                    self.startStatus = .warning("Location permission is unknown")
+                }
+            }
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        DispatchQueue.main.async {
+            guard self.shouldAcquireLocation || self.activity?.environment == .outdoor else { return }
+            if let locationError = error as? CLError, locationError.code == .denied {
+                self.gpsReadiness = .unavailable("Location access is off")
+            } else {
+                self.gpsReadiness = .acquiring(accuracyMeters: nil)
             }
         }
     }

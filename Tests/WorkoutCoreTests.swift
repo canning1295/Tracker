@@ -5,38 +5,85 @@ import HealthKit
 #endif
 
 final class WorkoutCoreTests: XCTestCase {
-    func testCrownMenuScrollDownMovesSelectionDown() {
-        let model = CrownMenuScrollModel(optionCount: 3, hasBack: false, hasForward: true)
-
-        XCTAssertEqual(model.crownValue(forSelection: 0), 0)
-        XCTAssertEqual(model.action(forCrownValue: -1, currentSelectionIndex: 0), .select(1))
-        XCTAssertEqual(model.action(forCrownValue: -2, currentSelectionIndex: 1), .select(2))
-        XCTAssertEqual(model.action(forCrownValue: 0, currentSelectionIndex: 0), nil)
+    func testGPSReadinessRequiresTenMeterAccuracyForReadyState() {
+        XCTAssertEqual(GPSReadiness.measured(horizontalAccuracy: nil), .acquiring(accuracyMeters: nil))
+        XCTAssertEqual(GPSReadiness.measured(horizontalAccuracy: -1), .acquiring(accuracyMeters: nil))
+        XCTAssertEqual(GPSReadiness.measured(horizontalAccuracy: 24), .acquiring(accuracyMeters: 24))
+        XCTAssertEqual(GPSReadiness.measured(horizontalAccuracy: 10), .ready(accuracyMeters: 10))
+        XCTAssertEqual(GPSReadiness.measured(horizontalAccuracy: 4.5), .ready(accuracyMeters: 4.5))
     }
 
-    func testCrownMenuScrollUpBacksOnlyFromTopSelection() {
-        let model = CrownMenuScrollModel(optionCount: 3, hasBack: true, hasForward: true)
+    func testIndoorEllipticalDistanceUsesPersonalHeartRateAnchor() {
+        let distance = IndoorDistanceEstimator.estimatedDistanceMeters(
+            activity: .indoorElliptical,
+            elapsedSeconds: 15 * 60,
+            averageHeartRate: 110,
+            heartRateSettings: HeartRateSettings(maxHeartRate: 190),
+            restingHeartRate: 60
+        )
 
-        XCTAssertEqual(model.crownLowerBound, -3)
-        XCTAssertEqual(model.crownUpperBound, 1)
-        XCTAssertEqual(model.action(forCrownValue: 1, currentSelectionIndex: 1), .select(0))
-        XCTAssertEqual(model.action(forCrownValue: 1, currentSelectionIndex: 0), .back)
+        XCTAssertEqual(distance, DistanceUnit.miles.metersPerUnit, accuracy: 0.01)
     }
 
-    func testCrownMenuForwardRequiresCurrentBottomSelection() {
-        let model = CrownMenuScrollModel(optionCount: 3, hasBack: false, hasForward: true)
+    func testEveryIndoorCardioActivityHasPersonalHeartRateCalibration() {
+        let calibrations: [(WorkoutActivity, TimeInterval)] = [
+            (.indoorRun, 12 * 60),
+            (.indoorWalk, 20 * 60),
+            (.indoorElliptical, 15 * 60),
+            (.indoorBike, 5 * 60)
+        ]
 
-        XCTAssertEqual(model.action(forCrownValue: -3, currentSelectionIndex: 1), .select(2))
-        XCTAssertEqual(model.action(forCrownValue: -3, currentSelectionIndex: 2), .forward(2))
+        for (activity, elapsedSeconds) in calibrations {
+            let distance = IndoorDistanceEstimator.estimatedDistanceMeters(
+                activity: activity,
+                elapsedSeconds: elapsedSeconds,
+                averageHeartRate: 110,
+                heartRateSettings: HeartRateSettings(maxHeartRate: 190),
+                restingHeartRate: 60
+            )
+            XCTAssertEqual(distance, DistanceUnit.miles.metersPerUnit, accuracy: 0.01, "\(activity) calibration")
+        }
     }
 
-    func testCrownMenuCanReachEveryIndoorWorkout() {
-        let model = CrownMenuScrollModel(optionCount: 5, hasBack: true, hasForward: false)
+    func testIndoorDistanceEstimateUsesActivityCalibrationAndHeartRateEffort() {
+        let settings = HeartRateSettings(maxHeartRate: 190)
+        let lowEffort = IndoorDistanceEstimator.estimatedDistanceMeters(
+            activity: .indoorWalk,
+            elapsedSeconds: 10 * 60,
+            averageHeartRate: 90,
+            heartRateSettings: settings,
+            restingHeartRate: 60
+        )
+        let highEffort = IndoorDistanceEstimator.estimatedDistanceMeters(
+            activity: .indoorWalk,
+            elapsedSeconds: 10 * 60,
+            averageHeartRate: 140,
+            heartRateSettings: settings,
+            restingHeartRate: 60
+        )
 
-        XCTAssertEqual(model.crownLowerBound, -4)
-        XCTAssertEqual(model.crownUpperBound, 1)
-        XCTAssertEqual(model.action(forCrownValue: -4, currentSelectionIndex: 3), .select(4))
-        XCTAssertEqual(model.action(forCrownValue: -3, currentSelectionIndex: 4), .select(3))
+        XCTAssertGreaterThan(lowEffort, 0)
+        XCTAssertGreaterThan(highEffort, lowEffort)
+        XCTAssertEqual(
+            IndoorDistanceEstimator.estimatedDistanceMeters(
+                activity: .outdoorRun,
+                elapsedSeconds: 600,
+                averageHeartRate: 140,
+                heartRateSettings: settings,
+                restingHeartRate: 60
+            ),
+            0
+        )
+        XCTAssertEqual(
+            IndoorDistanceEstimator.estimatedDistanceMeters(
+                activity: .weights,
+                elapsedSeconds: 600,
+                averageHeartRate: 140,
+                heartRateSettings: settings,
+                restingHeartRate: 60
+            ),
+            0
+        )
     }
 
     func testWorkoutControlPresentationForRunningPausedAndSavingStates() {
@@ -499,7 +546,7 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(settings.paceMode, .wholeWorkout)
         XCTAssertEqual(settings.rollingPaceSeconds, 45)
         XCTAssertTrue(settings.touchControlsEnabled)
-        XCTAssertTrue(settings.autoDisableTouchOnWorkoutStart)
+        XCTAssertFalse(settings.autoDisableTouchOnWorkoutStart)
         XCTAssertNil(settings.userMetrics.knownVO2Max)
         XCTAssertFalse(settings.stravaAutoUpload)
     }

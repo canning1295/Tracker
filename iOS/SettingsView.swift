@@ -27,8 +27,8 @@ struct SettingsView: View {
             }
 
             Section("Watch Controls") {
-                Toggle("Enable Touch Controls", isOn: $appState.settings.touchControlsEnabled)
-                Toggle("Auto-disable Touch During Workouts", isOn: $appState.settings.autoDisableTouchOnWorkoutStart)
+                Label("Touch navigation stays on", systemImage: "hand.tap")
+                    .foregroundStyle(.secondary)
 
                 Picker("Announce Every", selection: $appState.settings.splitAnnouncementUnit) {
                     ForEach(WorkoutAnnouncementUnit.allCases) { unit in
