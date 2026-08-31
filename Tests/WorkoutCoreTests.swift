@@ -1192,6 +1192,94 @@ final class WorkoutCoreTests: XCTestCase {
         XCTAssertEqual(WatchWorkoutRemoteCommand(rawValue: "togglePause"), .togglePause)
     }
 
+    func testMovingDurationExcludesTimeThatCoveredNoDistance() {
+        let start = Date(timeIntervalSince1970: 3_400)
+        let mile = DistanceUnit.miles.metersPerUnit
+        // 120s waiting for GPS before moving, 60s standing before the stop press.
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_140),
+            duration: 1_140,
+            distanceMeters: mile * 2,
+            activeEnergyKilocalories: 300,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 120, start: start),
+                routePoint(distanceMeters: mile, seconds: 600, start: start),
+                routePoint(distanceMeters: mile * 2, seconds: 1_080, start: start)
+            ]
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+        let moving = PaceCalculator.movingDuration(for: workout, splits: splits, unit: .miles)
+
+        XCTAssertEqual(moving ?? 0, 960, accuracy: 0.01)
+        XCTAssertEqual(workout.duration - (moving ?? 0), 180, accuracy: 0.01)
+    }
+
+    func testMovingDurationMatchesDurationWithoutRoute() {
+        let start = Date(timeIntervalSince1970: 3_500)
+        let workout = WorkoutSummary(
+            activity: .indoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(1_200),
+            duration: 1_200,
+            distanceMeters: DistanceUnit.miles.metersPerUnit * 2,
+            activeEnergyKilocalories: 250
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+        let moving = PaceCalculator.movingDuration(for: workout, splits: splits, unit: .miles)
+
+        // Treadmill workouts have nothing to subtract, so the tile must not split.
+        XCTAssertEqual(moving ?? 0, 1_200, accuracy: 0.01)
+    }
+
+    func testMovingDurationRejectsRouteCoveringOnlyPartOfTheDistance() {
+        let start = Date(timeIntervalSince1970: 3_600)
+        let mile = DistanceUnit.miles.metersPerUnit
+        // HealthKit recorded 4 miles but GPS only captured 2 of them.
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(2_400),
+            duration: 2_400,
+            distanceMeters: mile * 4,
+            activeEnergyKilocalories: 500,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: mile * 2, seconds: 960, start: start)
+            ]
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+
+        XCTAssertNil(PaceCalculator.movingDuration(for: workout, splits: splits, unit: .miles))
+    }
+
+    func testMovingDurationNeverExceedsWorkoutDuration() {
+        let start = Date(timeIntervalSince1970: 3_700)
+        let mile = DistanceUnit.miles.metersPerUnit
+        let workout = WorkoutSummary(
+            activity: .outdoorRun,
+            startDate: start,
+            endDate: start.addingTimeInterval(600),
+            duration: 600,
+            distanceMeters: mile * 2,
+            activeEnergyKilocalories: 200,
+            route: [
+                routePoint(distanceMeters: 0, seconds: 0, start: start),
+                routePoint(distanceMeters: mile * 2, seconds: 960, start: start)
+            ]
+        )
+
+        let splits = SplitBuilder.splits(for: workout, unit: .miles)
+
+        // Route outlasting the stored duration means the data disagrees; the
+        // headline time must fall back rather than invent a longer workout.
+        XCTAssertNil(PaceCalculator.movingDuration(for: workout, splits: splits, unit: .miles))
+    }
+
     func testAveragePaceMatchesSplitsWhenWorkoutDurationIncludesNonMovingTime() {
         let start = Date(timeIntervalSince1970: 3_000)
         let mile = DistanceUnit.miles.metersPerUnit

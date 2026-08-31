@@ -244,9 +244,17 @@ struct ActivityDetailView: View {
     }
 
     private func metricGrid(workout: WorkoutSummary, splits: [SplitSummary]) -> some View {
-        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
+        let movingDuration = PaceCalculator.movingDuration(for: workout, splits: splits, unit: appState.settings.distanceUnit)
+        // Only worth splitting the two apart once they actually disagree.
+        let stoppedSeconds = movingDuration.map { workout.duration - $0 } ?? 0
+        let showsMovingTime = stoppedSeconds >= 5
+
+        return Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 12) {
             GridRow {
-                MetricTile(title: "Time", value: WorkoutFormatter.duration(workout.duration))
+                MetricTile(
+                    title: showsMovingTime ? "Moving Time" : "Time",
+                    value: WorkoutFormatter.duration(showsMovingTime ? (movingDuration ?? workout.duration) : workout.duration)
+                )
                 if workout.activity.recordsDistance {
                     MetricTile(title: "Distance", value: workout.distanceMeters > 0 ? WorkoutFormatter.distance(workout.distanceMeters, unit: appState.settings.distanceUnit) : "--")
                 } else {
@@ -261,6 +269,12 @@ struct ActivityDetailView: View {
                 GridRow {
                     MetricTile(title: "Active Calories", value: WorkoutFormatter.activeCalories(workout.activeEnergyKilocalories))
                     MetricTile(title: "Pace", value: WorkoutFormatter.pace(PaceCalculator.averagePaceSecondsPerUnit(for: workout, splits: splits, unit: appState.settings.distanceUnit), unit: appState.settings.distanceUnit))
+                }
+            }
+            if showsMovingTime {
+                GridRow {
+                    MetricTile(title: "Total Time", value: WorkoutFormatter.duration(workout.duration))
+                    MetricTile(title: "Stopped", value: WorkoutFormatter.duration(stoppedSeconds))
                 }
             }
             if workout.activity == .outdoorRun || workout.activity == .outdoorWalk {

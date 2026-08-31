@@ -298,6 +298,30 @@ enum PaceCalculator {
             )
     }
 
+    /// Time spent actually covering the recorded distance, on the same basis as
+    /// the splits, so Time, Distance, and Pace agree with one another.
+    ///
+    /// Returns nil when the route is too incomplete to stand as a headline
+    /// number -- a half-recorded route would otherwise make the workout look far
+    /// faster than it was.
+    static func movingDuration(
+        for workout: WorkoutSummary,
+        splits: [SplitSummary],
+        unit: DistanceUnit
+    ) -> TimeInterval? {
+        var seconds = 0.0
+        var meters = 0.0
+        for split in splits {
+            guard let pace = split.paceSecondsPerUnit, split.distanceMeters > 0 else { continue }
+            seconds += pace * (split.distanceMeters / unit.metersPerUnit)
+            meters += split.distanceMeters
+        }
+
+        guard seconds > 0, meters > 0, seconds <= workout.duration else { return nil }
+        if workout.distanceMeters > 0, meters / workout.distanceMeters < 0.9 { return nil }
+        return seconds
+    }
+
     static func rollingPace(points: [RoutePoint], windowSeconds: Int, unit: DistanceUnit) -> Double? {
         guard let last = points.last, points.count > 1 else { return nil }
         let cutoff = last.timestamp.addingTimeInterval(-TimeInterval(windowSeconds))
