@@ -244,7 +244,7 @@ struct ActivityDetailView: View {
     }
 
     private func metricGrid(workout: WorkoutSummary, splits: [SplitSummary]) -> some View {
-        let movingDuration = PaceCalculator.movingDuration(for: workout, splits: splits, unit: appState.settings.distanceUnit)
+        let movingDuration = appState.movingDuration(for: workout)
         // Only worth splitting the two apart once they actually disagree.
         let stoppedSeconds = movingDuration.map { workout.duration - $0 } ?? 0
         let showsMovingTime = stoppedSeconds >= 5

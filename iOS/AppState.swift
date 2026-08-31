@@ -35,14 +35,21 @@ final class AppState {
     var workouts: [WorkoutSummary] = [] {
         didSet {
             summaryRevision += 1
+            movingDurationCache.removeAll()
         }
     }
     var activityEdits: [ActivityEdit] {
         didSet {
             summaryRevision += 1
+            movingDurationCache.removeAll()
             settingsStore.saveActivityEdits(activityEdits)
         }
     }
+
+    /// Walking a route to build splits is far too costly to repeat for every row
+    /// on every redraw, and the result only changes when a workout or one of its
+    /// edits does. Ignored by observation so filling it cannot trigger a redraw.
+    @ObservationIgnored private var movingDurationCache: [UUID: TimeInterval] = [:]
     private(set) var workoutMerges: [WorkoutMerge] {
         didSet {
             summaryRevision += 1
@@ -263,6 +270,28 @@ final class AppState {
         } catch {
             healthMetricsMessage = error.localizedDescription
         }
+    }
+
+    /// Time spent actually covering the recorded distance. Nil when the route
+    /// cannot support it, leaving the caller to fall back to the stored duration.
+    func movingDuration(for workout: WorkoutSummary) -> TimeInterval? {
+        if let cached = movingDurationCache[workout.id] {
+            return cached
+        }
+        let splits = SplitBuilder.splits(for: workout, unit: settings.distanceUnit)
+        guard let moving = PaceCalculator.movingDuration(
+            for: workout,
+            splits: splits,
+            unit: settings.distanceUnit
+        ) else {
+            return nil
+        }
+        movingDurationCache[workout.id] = moving
+        return moving
+    }
+
+    func displayDuration(for workout: WorkoutSummary) -> TimeInterval {
+        movingDuration(for: workout) ?? workout.duration
     }
 
     func startOnWatch(activity: WorkoutActivity) {

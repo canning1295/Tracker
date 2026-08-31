@@ -81,7 +81,12 @@ struct ActivityListView: View {
                     ForEach(appState.visibleWorkouts) { workout in
                         let displayWorkout = appState.adjustedWorkout(workout)
                         NavigationLink(value: workout) {
-                            ActivityRow(workout: displayWorkout, unit: appState.settings.distanceUnit, stravaStatus: appState.stravaStatus(for: workout.id))
+                            ActivityRow(
+                                workout: displayWorkout,
+                                duration: appState.displayDuration(for: displayWorkout),
+                                unit: appState.settings.distanceUnit,
+                                stravaStatus: appState.stravaStatus(for: workout.id)
+                            )
                         }
                     }
                 }
@@ -130,6 +135,7 @@ private struct StartWorkoutSheet: View {
 
 private struct ActivityRow: View {
     let workout: WorkoutSummary
+    let duration: TimeInterval
     let unit: DistanceUnit
     let stravaStatus: StravaUploadStatus
 
@@ -150,7 +156,7 @@ private struct ActivityRow: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 4) {
-                Text(WorkoutFormatter.duration(workout.duration))
+                Text(WorkoutFormatter.duration(duration))
                     .font(.subheadline.weight(.semibold))
                 if workout.distanceMeters > 0 {
                     Text(WorkoutFormatter.distance(workout.distanceMeters, unit: unit))
