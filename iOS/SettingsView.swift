@@ -6,6 +6,7 @@ struct SettingsView: View {
     @State private var isImportingHealthMetrics = false
     @State private var isConnectingStrava = false
     @State private var isConfirmingWatchEnd = false
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         @Bindable var appState = appState
@@ -64,7 +65,28 @@ struct SettingsView: View {
             } header: {
                 Text("Current Workout")
             } footer: {
-                Text("Controls appear while a Tracker workout is running and the Watch is reachable. On Apple Watch Ultra, assign \u{201C}Pause or Resume Workout\u{201D} to the Action Button in Watch Settings to pause without the screen.")
+                Text("Controls appear while a Tracker workout is running and the Watch is reachable.")
+            }
+
+            Section {
+                Button {
+                    openURL(URL(string: "shortcuts://create-shortcut")!)
+                } label: {
+                    Label("Open Shortcuts", systemImage: "bolt.circle")
+                }
+            } header: {
+                Text("Action Button")
+            } footer: {
+                Text("""
+                The Action Button can only run a shortcut from your library, so the \u{201C}Pause or Resume Workout\u{201D} action has to be saved as one first.
+
+                1. Open Shortcuts and add a new shortcut.
+                2. Search for \u{201C}Pause or Resume Workout\u{201D} and add it.
+                3. Name it, then make sure it is switched on for Apple Watch in the shortcut\u{2019}s details.
+                4. On the Watch: Settings \u{203A} Action Button \u{203A} Action \u{203A} Shortcut, then pick it.
+
+                With a workout running, one press pauses or resumes. With nothing running, it opens Tracker at the start screen.
+                """)
             }
 
             Section("Units") {

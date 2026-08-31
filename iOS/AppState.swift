@@ -323,6 +323,15 @@ final class AppState {
         startOnWatch(activity: activity)
     }
 
+    /// The pause intent ships in both apps, so a shortcut can resolve to the
+    /// phone instead of the Watch. The Watch owns the session either way, so the
+    /// phone relays rather than dropping the press.
+    func consumePendingIntentCommand() {
+        guard let command = PendingWorkoutCommandStore.consume() else { return }
+        guard activeWatchSession != nil else { return }
+        sendWatchCommand(command)
+    }
+
     func edit(for workoutID: UUID) -> ActivityEdit {
         activityEdits.first { $0.workoutID == workoutID } ?? ActivityEdit(workoutID: workoutID)
     }
@@ -929,7 +938,7 @@ final class AppState {
     private var actionButtonReadiness: DeviceReadinessItem {
         DeviceReadinessItem(
             title: "Action Button",
-            detail: "Assign the Tracker Pause or Resume Workout shortcut to the Apple Watch Ultra Action Button. With no workout running it opens Tracker at the start screen.",
+            detail: "Save Pause or Resume Workout as a shortcut in the Shortcuts app, enable it on Apple Watch, then pick it under Settings > Action Button > Shortcut. The Action Button only lists saved shortcuts.",
             level: .warning
         )
     }

@@ -24,6 +24,7 @@ private struct AppStartupView: View {
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
                 appState?.consumePendingIntentStart()
+                appState?.consumePendingIntentCommand()
                 if let appState {
                     Task {
                         await appState.refreshHealthData()
@@ -69,6 +70,7 @@ private struct AppStartupView: View {
         let state = AppState()
         appState = state
         state.consumePendingIntentStart()
+        state.consumePendingIntentCommand()
 
         if let pendingOpenURL {
             self.pendingOpenURL = nil
